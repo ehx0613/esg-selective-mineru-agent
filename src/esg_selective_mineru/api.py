@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -158,6 +160,13 @@ def _list_jobs() -> list[Dict[str, Any]]:
     return sorted(jobs, key=lambda item: str(item.get("updated_at") or ""), reverse=True)
 
 
+def _find_duplicate_job(file_sha256: str) -> Dict[str, Any] | None:
+    for job in _list_jobs():
+        if file_sha256 and job.get("file_sha256") == file_sha256:
+            return job
+    return None
+
+
 def _review_priority(row: Dict[str, Any], review: Dict[str, Any]) -> int:
     if review.get("status") in {"approved", "rejected"}:
         return 0
@@ -266,8 +275,9 @@ def _write_reviewed_csv(job_id: str, rows: list[Dict[str, Any]]) -> Path:
     return path
 
 
-async def _save_upload(file: UploadFile, pdf_path: Path) -> int:
+async def _save_upload(file: UploadFile, pdf_path: Path) -> tuple[int, str]:
     total = 0
+    digest = hashlib.sha256()
     with pdf_path.open("wb") as handle:
         while chunk := await file.read(1024 * 1024):
             total += len(chunk)
@@ -275,8 +285,9 @@ async def _save_upload(file: UploadFile, pdf_path: Path) -> int:
                 handle.close()
                 pdf_path.unlink(missing_ok=True)
                 raise HTTPException(status_code=413, detail="pdf_too_large")
+            digest.update(chunk)
             handle.write(chunk)
-    return total
+    return total, digest.hexdigest()
 
 
 def _validate_upload(file: UploadFile, request: Request | None = None) -> str:
@@ -302,7 +313,20 @@ async def _create_job_from_upload(
     job_dir = _job_dir(job_id)
     job_dir.mkdir(parents=True, exist_ok=True)
     pdf_path = _storage_root(settings) / f"{job_id}_{filename}"
-    upload_bytes = await _save_upload(file, pdf_path)
+    upload_bytes, file_sha256 = await _save_upload(file, pdf_path)
+    duplicate = _find_duplicate_job(file_sha256)
+    if duplicate is not None:
+        pdf_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "duplicate_report",
+                "message": "该 ESG 报告已经上传过，请在历史报告列表中查看原任务。",
+                "job_id": duplicate.get("job_id"),
+                "filename": Path(str(duplicate.get("pdf_path") or "")).name,
+                "status": duplicate.get("status"),
+            },
+        )
 
     job = {
         "job_id": job_id,
@@ -316,6 +340,7 @@ async def _create_job_from_upload(
         "error": "",
         "summary": {},
         "upload_bytes": upload_bytes,
+        "file_sha256": file_sha256,
     }
     _write_job(job)
     background_tasks.add_task(_run_job, job_id)
@@ -431,6 +456,20 @@ def retry_job(job_id: str, background_tasks: BackgroundTasks) -> CreateJobRespon
     _write_job(job)
     background_tasks.add_task(_run_job, job_id)
     return CreateJobResponse(job_id=job_id, status="queued", mode=job["mode"], output_dir=job["output_dir"])
+
+
+@app.delete("/jobs/{job_id}")
+def delete_job(job_id: str) -> Dict[str, Any]:
+    job = _read_job(job_id)
+    if job.get("status") == "running":
+        raise HTTPException(status_code=409, detail="job_is_running")
+    pdf_path = Path(str(job.get("pdf_path") or ""))
+    if pdf_path.exists() and _storage_root(settings) in pdf_path.resolve().parents:
+        pdf_path.unlink(missing_ok=True)
+    job_dir = _job_dir(job_id)
+    if job_dir.exists():
+        shutil.rmtree(job_dir)
+    return {"deleted": True, "job_id": job_id}
 
 
 @app.get("/jobs/{job_id}/results")
