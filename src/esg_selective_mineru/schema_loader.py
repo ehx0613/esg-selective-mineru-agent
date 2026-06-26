@@ -6,9 +6,13 @@ from typing import Any, Dict, List
 
 
 def load_a_share_schema(original_project_root: Path) -> List[Dict[str, Any]]:
-    schema_path = original_project_root / "config" / "schema" / "a_share_v5.py"
+    bundled_schema_path = Path(__file__).resolve().parents[2] / "configs" / "schema" / "a_share_v5.py"
+    external_schema_path = original_project_root / "config" / "schema" / "a_share_v5.py"
+    schema_path = bundled_schema_path if bundled_schema_path.exists() else external_schema_path
     if not schema_path.exists():
-        raise FileNotFoundError(f"Cannot find A-share v5 schema: {schema_path}")
+        raise FileNotFoundError(
+            f"Cannot find A-share v5 schema: {bundled_schema_path} or {external_schema_path}"
+        )
     spec = importlib.util.spec_from_file_location("a_share_v5_external", schema_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Cannot import schema module: {schema_path}")

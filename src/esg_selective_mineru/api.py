@@ -99,6 +99,9 @@ react_dist_dir = settings.project_root / "frontend-react" / "dist"
 frontend_dir = react_dist_dir if react_dist_dir.exists() else settings.project_root / "frontend"
 if frontend_dir.exists():
     app.mount("/frontend", StaticFiles(directory=frontend_dir), name="frontend")
+    assets_dir = frontend_dir / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
 
 def _now() -> str:
