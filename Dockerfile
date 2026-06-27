@@ -19,13 +19,17 @@ ENV PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ENV PIP_TRUSTED_HOST=mirrors.aliyun.com
 ENV PIP_DEFAULT_TIMEOUT=120
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml README.md /app/
 COPY src /app/src
 COPY configs /app/configs
 COPY frontend /app/frontend
 COPY --from=frontend /frontend/dist /app/frontend-react/dist
 
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e . mineru
 
 EXPOSE 8000
 
