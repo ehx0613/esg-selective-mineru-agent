@@ -111,7 +111,12 @@ def _find_year_aligned_value(
                 years = []
                 for year_line in lines[index:index + 6]:
                     year_values = YEAR_RE.findall(year_line)
-                    if len(year_values) != 1 or year_line.strip() != year_values[0]:
+                    stripped_year_line = year_line.strip()
+                    if (
+                        len(year_values) != 1
+                        or not stripped_year_line.startswith(year_values[0])
+                        or len(stripped_year_line) > 12
+                    ):
                         break
                     years.extend(year_values)
                 if target_year not in years or len(years) < 2:
@@ -119,6 +124,12 @@ def _find_year_aligned_value(
                 search_start = index + len(years)
             else:
                 search_start = index + 1
+            if len(years) >= 3:
+                numeric_years = [int(year) for year in years]
+                is_ascending = numeric_years == sorted(numeric_years)
+                is_descending = numeric_years == sorted(numeric_years, reverse=True)
+                if not is_ascending and not is_descending:
+                    years = sorted(years)
             target_index = years.index(target_year)
             for offset, candidate in enumerate(lines[search_start:search_start + 10]):
                 if _looks_like_field_line(candidate, field, result):

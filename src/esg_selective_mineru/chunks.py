@@ -8,6 +8,7 @@ import fitz
 
 _CHUNK_SIZE = 1200
 _OVERLAP = 150
+_LINE_Y_TOLERANCE = 3.0
 
 
 def _clean(text: str) -> str:
@@ -29,6 +30,45 @@ def _split_text(text: str, size: int = _CHUNK_SIZE, overlap: int = _OVERLAP) -> 
             break
         start = max(0, end - overlap)
     return chunks
+
+
+def _words_to_visual_lines(words: List[tuple]) -> str:
+    rows: List[List[tuple]] = []
+    for word in sorted(words, key=lambda item: (round(float(item[1]) / _LINE_Y_TOLERANCE), float(item[0]))):
+        y0 = float(word[1])
+        for row in rows:
+            row_y = sum(float(item[1]) for item in row) / len(row)
+            if abs(row_y - y0) <= _LINE_Y_TOLERANCE:
+                row.append(word)
+                break
+        else:
+            rows.append([word])
+
+    lines: List[str] = []
+    for row in rows:
+        ordered = sorted(row, key=lambda item: float(item[0]))
+        line = " ".join(str(item[4]) for item in ordered if str(item[4]).strip())
+        if line.strip():
+            lines.append(line)
+    return _clean("\n".join(lines))
+
+
+def build_pymupdf_layout_chunks(pdf_path: Path) -> List[Dict[str, Any]]:
+    doc = fitz.open(pdf_path)
+    chunks: List[Dict[str, Any]] = []
+    try:
+        for page_index, page in enumerate(doc, start=1):
+            page_text = _words_to_visual_lines(page.get_text("words") or [])
+            for chunk_index, chunk in enumerate(_split_text(page_text), start=1):
+                chunks.append({
+                    "chunk_id": f"pymupdf_layout_p{page_index}_{chunk_index}",
+                    "source": "pymupdf_layout",
+                    "page": page_index,
+                    "text": chunk,
+                })
+        return chunks
+    finally:
+        doc.close()
 
 
 def build_pymupdf_chunks(pdf_path: Path) -> List[Dict[str, Any]]:
@@ -71,7 +111,8 @@ def build_mineru_chunks(mineru_root: Path) -> List[Dict[str, Any]]:
 
 
 def build_rag_chunks(pdf_path: Path, mineru_root: Path | None = None) -> List[Dict[str, Any]]:
-    chunks = build_pymupdf_chunks(pdf_path)
+    chunks = build_pymupdf_layout_chunks(pdf_path)
+    chunks.extend(build_pymupdf_chunks(pdf_path))
     if mineru_root is not None:
         chunks.extend(build_mineru_chunks(mineru_root))
     return chunks

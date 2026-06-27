@@ -2,33 +2,38 @@ from esg_selective_mineru.extractor import _align_result_to_target_year
 from esg_selective_mineru.quality import validate_and_score_result
 
 
-def test_align_result_to_target_year_from_horizontal_table():
-    field = {
-        "field_key": "employee_training_hours",
-        "name_cn": "员工培训小时",
-        "indicator_type": "quantitative",
-        "aliases": ["培训总时长", "年度培训总时长"],
-    }
-    result = {
+FIELD = {
+    "field_key": "employee_training_hours",
+    "name_cn": "\u5458\u5de5\u57f9\u8bad\u5c0f\u65f6",
+    "indicator_type": "quantitative",
+    "aliases": ["\u57f9\u8bad\u603b\u65f6\u957f", "\u5e74\u5ea6\u57f9\u8bad\u603b\u65f6\u957f"],
+}
+
+
+def _result(value: str = "36500"):
+    return {
         "field_key": "employee_training_hours",
         "matched": True,
-        "value": "36500",
-        "unit": "小时",
+        "value": value,
+        "unit": "\u5c0f\u65f6",
         "year": "2022",
-        "evidence": "年度培训总时长 小时 35,000 36,500 38,700",
+        "evidence": "\u5e74\u5ea6\u57f9\u8bad\u603b\u65f6\u957f\n\u5c0f\u65f6\n35,000\n36,500\n38,700",
         "source_chunk_id": "c1",
         "reason": "",
     }
+
+
+def test_align_result_to_target_year_from_horizontal_table():
     contexts = {
         "employee_training_hours": [
             {
                 "chunk_id": "c1",
-                "text": "指标 单位 2020 2021 2022\n年度培训总时长 小时 35,000 36,500 38,700",
+                "text": "\u6307\u6807 \u5355\u4f4d 2020 2021 2022\n\u5e74\u5ea6\u57f9\u8bad\u603b\u65f6\u957f \u5c0f\u65f6 35,000 36,500 38,700",
             }
         ]
     }
 
-    aligned = _align_result_to_target_year(result, field, contexts, "2022")
+    aligned = _align_result_to_target_year(_result(), FIELD, contexts, "2022")
 
     assert aligned["value"] == "38700"
     assert aligned["year"] == "2022"
@@ -37,32 +42,16 @@ def test_align_result_to_target_year_from_horizontal_table():
 
 
 def test_align_result_to_target_year_from_wrapped_table_header():
-    field = {
-        "field_key": "employee_training_hours",
-        "name_cn": "鍛樺伐鍩硅灏忔椂",
-        "indicator_type": "quantitative",
-        "aliases": ["鍩硅鎬绘椂闀?", "骞村害鍩硅鎬绘椂闀?"],
-    }
-    result = {
-        "field_key": "employee_training_hours",
-        "matched": True,
-        "value": "36500",
-        "unit": "灏忔椂",
-        "year": "2022",
-        "evidence": "骞村害鍩硅鎬绘椂闀?\n灏忔椂\n35,000\n36,500\n38,700",
-        "source_chunk_id": "c1",
-        "reason": "",
-    }
     contexts = {
         "employee_training_hours": [
             {
                 "chunk_id": "c1",
-                "text": "2020\n2021\n2022\n骞村害鍩硅鎬绘椂闀?\n灏忔椂\n35,000\n36,500\n38,700",
+                "text": "2020 \u5e74\n2021 \u5e74\n2022 \u5e74\n\u5e74\u5ea6\u57f9\u8bad\u603b\u65f6\u957f\n\u5c0f\u65f6\n35,000\n36,500\n38,700",
             }
         ]
     }
 
-    aligned = _align_result_to_target_year(result, field, contexts, "2022")
+    aligned = _align_result_to_target_year(_result(), FIELD, contexts, "2022")
 
     assert aligned["value"] == "38700"
     assert aligned["year"] == "2022"
@@ -70,17 +59,36 @@ def test_align_result_to_target_year_from_wrapped_table_header():
     assert "year_aligned_from_table" in aligned["reason"]
 
 
+def test_align_result_corrects_non_monotonic_pdf_year_order():
+    contexts = {
+        "employee_training_hours": [
+            {
+                "chunk_id": "c1",
+                "text": "\u6307\u6807\u540d\u79f0\n\u5355\u4f4d\n2021 \u5e74\n2022 \u5e74\n2020 \u5e74\n\u5e74\u5ea6\u57f9\u8bad\u603b\u65f6\u957f\n\u5c0f\u65f6\n35,000\n36,500\n38,700",
+            }
+        ]
+    }
+
+    aligned = _align_result_to_target_year(_result(), FIELD, contexts, "2022")
+
+    assert aligned["value"] == "38700"
+    assert aligned["year"] == "2022"
+    assert "2021" in aligned["evidence"]
+    assert "2022" in aligned["evidence"]
+    assert "year_aligned_from_table" in aligned["reason"]
+
+
 def test_quantitative_result_warns_when_target_year_missing_from_evidence():
     row = {
         "field_key": "employee_training_hours",
-        "name_cn": "员工培训小时",
+        "name_cn": "\u5458\u5de5\u57f9\u8bad\u5c0f\u65f6",
         "category": "S",
         "indicator_type": "quantitative",
         "matched": True,
         "value": "36500",
-        "unit": "小时",
+        "unit": "\u5c0f\u65f6",
         "year": "2022",
-        "evidence": "年度培训总时长 小时 35,000 36,500 38,700",
+        "evidence": "\u5e74\u5ea6\u57f9\u8bad\u603b\u65f6\u957f \u5c0f\u65f6 35,000 36,500 38,700",
         "source_page": 34,
         "confidence": 0.95,
     }

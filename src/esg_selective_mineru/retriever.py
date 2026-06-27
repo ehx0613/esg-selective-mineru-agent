@@ -8,6 +8,10 @@ from typing import Any, Dict, Iterable, List
 from openai import OpenAI
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9]+|[\u4e00-\u9fff]")
+SOURCE_BONUS = {
+    "mineru": 0.35,
+    "pymupdf_layout": 0.25,
+}
 
 
 def tokenize(text: str) -> List[str]:
@@ -61,6 +65,7 @@ class SimpleRetriever:
             for raw_term in set(re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z][A-Za-z0-9 ]{2,}", query)):
                 if raw_term and raw_term in text:
                     score += 2.0
+            score += SOURCE_BONUS.get(str(chunk.get("source") or ""), 0.0)
             if score > 0:
                 item = dict(chunk)
                 item["score"] = round(score, 4)
@@ -136,6 +141,7 @@ class LocalVectorRetriever:
         scored: List[Dict[str, Any]] = []
         for chunk, vector in zip(self.chunks, self.weighted_doc_vectors):
             score = self._cosine(query_vector, vector)
+            score += SOURCE_BONUS.get(str(chunk.get("source") or ""), 0.0)
             if score > 0:
                 item = dict(chunk)
                 item["score"] = round(score, 4)
@@ -192,6 +198,7 @@ class EmbeddingVectorRetriever:
         scored: List[Dict[str, Any]] = []
         for chunk, vector in zip(self.chunks, self.doc_vectors):
             score = self._cosine(query_vector, vector)
+            score += SOURCE_BONUS.get(str(chunk.get("source") or ""), 0.0)
             if score > 0:
                 item = dict(chunk)
                 item["score"] = round(score, 6)
