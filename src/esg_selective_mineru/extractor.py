@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import csv
+import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
@@ -11,6 +12,9 @@ from .llm_client import LLMClient
 from .quality import enrich_results
 from .retriever import HybridRetriever, SimpleRetriever
 from .schema_loader import load_a_share_schema, schema_summary
+
+YEAR_RE = re.compile(r"20[0-3][0-9]")
+NUMBER_RE = re.compile(r"-?\d+(?:,\d{3})*(?:\.\d+)?|-?\d+(?:\.\d+)?")
 
 
 def _batches(items: List[Dict[str, Any]], size: int) -> Iterable[List[Dict[str, Any]]]:
@@ -50,6 +54,97 @@ def _normalize_result(raw: Dict[str, Any], field: Dict[str, Any]) -> Dict[str, A
         result["confidence"] = float(raw.get("confidence", 0.0) or 0.0)
     except (TypeError, ValueError):
         result["confidence"] = 0.0
+    return result
+
+
+def _number_tokens(text: str) -> List[str]:
+    values: List[str] = []
+    for match in NUMBER_RE.finditer(text):
+        token = match.group(0)
+        if YEAR_RE.fullmatch(token.replace(",", "")):
+            continue
+        values.append(token)
+    return values
+
+
+def _field_terms(field: Dict[str, Any]) -> List[str]:
+    terms = [str(field.get("name_cn") or ""), str(field.get("field_key") or "")]
+    terms.extend(str(item or "") for item in field.get("aliases") or [])
+    return [term.strip().lower() for term in terms if term and len(term.strip()) >= 2]
+
+
+def _looks_like_field_line(line: str, field: Dict[str, Any], result: Dict[str, Any]) -> bool:
+    lowered = line.lower()
+    if any(term in lowered for term in _field_terms(field)):
+        return True
+    evidence = str(result.get("evidence") or "").strip()
+    if evidence and evidence in line:
+        return True
+    unit = str(result.get("unit") or "").strip()
+    return bool(unit and unit in line and _number_tokens(line))
+
+
+def _find_year_aligned_value(
+    result: Dict[str, Any],
+    field: Dict[str, Any],
+    contexts: List[Dict[str, Any]],
+    target_year: str,
+) -> tuple[str, str]:
+    if not target_year or not result.get("matched"):
+        return "", ""
+    if str(field.get("indicator_type") or "").lower() not in {"quantitative", "定量"}:
+        return "", ""
+
+    source_chunk_id = str(result.get("source_chunk_id") or "")
+    ordered_contexts = sorted(
+        contexts,
+        key=lambda item: 0 if source_chunk_id and str(item.get("chunk_id") or "") == source_chunk_id else 1,
+    )
+    for item in ordered_contexts:
+        text = str(item.get("text") or "")
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not lines:
+            lines = [text.strip()]
+        for index, line in enumerate(lines):
+            years = YEAR_RE.findall(line)
+            if target_year not in years or len(years) < 2:
+                continue
+            target_index = years.index(target_year)
+            for candidate in lines[index + 1:index + 8]:
+                if not _looks_like_field_line(candidate, field, result):
+                    continue
+                numbers = _number_tokens(candidate)
+                if len(numbers) <= target_index:
+                    continue
+                return numbers[target_index], f"{line} {candidate}"[:160]
+    return "", ""
+
+
+def _align_result_to_target_year(
+    result: Dict[str, Any],
+    field: Dict[str, Any],
+    contexts: Dict[str, List[Dict[str, Any]]],
+    target_year: str,
+) -> Dict[str, Any]:
+    aligned_value, aligned_evidence = _find_year_aligned_value(
+        result,
+        field,
+        contexts.get(str(field.get("field_key") or ""), []),
+        target_year,
+    )
+    if not aligned_value:
+        return result
+    current_value = str(result.get("value") or "").replace(",", "").strip()
+    normalized_aligned = aligned_value.replace(",", "").strip()
+    result["year"] = target_year
+    if current_value != normalized_aligned:
+        result["value"] = normalized_aligned
+        result["evidence"] = aligned_evidence
+        reason = str(result.get("reason") or "").strip()
+        suffix = "year_aligned_from_table"
+        result["reason"] = f"{reason}; {suffix}" if reason else suffix
+    elif target_year not in str(result.get("evidence") or "") and aligned_evidence:
+        result["evidence"] = aligned_evidence
     return result
 
 
@@ -116,7 +211,8 @@ def extract_report(pdf_path: Path, output_dir: Path, settings: Settings, *, use_
                 raw_results = client.extract_fields(batch, contexts, target_year=active_year)
                 by_key = {item.get("field_key"): item for item in raw_results if isinstance(item, dict)}
                 for field in batch:
-                    results.append(_normalize_result(by_key.get(field["field_key"], {}), field))
+                    result = _normalize_result(by_key.get(field["field_key"], {}), field)
+                    results.append(_align_result_to_target_year(result, field, contexts, active_year))
             except Exception as exc:
                 llm_errors.append(str(exc))
                 results.extend(_empty_result(field, f"llm_error:{exc}") for field in batch)

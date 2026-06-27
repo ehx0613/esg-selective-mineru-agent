@@ -136,6 +136,14 @@ def validate_and_score_result(row: Dict[str, Any], *, target_year: str = "2024")
     clean["year"] = checked_year
     if year_warning:
         warnings.append(year_warning)
+    if (
+        clean.get("matched")
+        and target_year
+        and str(clean.get("indicator_type")).lower() in {"quantitative", "定量"}
+        and str(clean.get("evidence") or "").strip()
+        and target_year not in str(clean.get("evidence") or "")
+    ):
+        warnings.append("target_year_not_in_evidence")
 
     score = evidence_score(clean, target_year=target_year)
     if clean.get("matched") and score < 50:
