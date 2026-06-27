@@ -170,15 +170,18 @@ def _write_report_for_job(job: Dict[str, Any], filename: str = "") -> None:
     report_filename = filename or Path(pdf_path).name
     inferred = _infer_report_metadata(report_filename)
     job["report_id"] = report_id
+    job["company_name"] = job.get("company_name") or inferred["company_name"]
+    job["stock_code"] = job.get("stock_code") or inferred["stock_code"]
+    job["report_year"] = job.get("report_year") or inferred["report_year"]
     job_store.upsert_report({
         "report_id": report_id,
         "filename": report_filename,
         "file_sha256": job.get("file_sha256", ""),
         "pdf_path": pdf_path,
         "upload_bytes": job.get("upload_bytes", 0),
-        "company_name": job.get("company_name") or inferred["company_name"],
-        "stock_code": job.get("stock_code") or inferred["stock_code"],
-        "report_year": job.get("report_year") or inferred["report_year"],
+        "company_name": job["company_name"],
+        "stock_code": job["stock_code"],
+        "report_year": job["report_year"],
         "created_at": now,
         "updated_at": job.get("updated_at") or now,
     })
