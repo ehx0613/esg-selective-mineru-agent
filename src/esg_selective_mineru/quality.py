@@ -105,6 +105,18 @@ def evidence_score(row: Dict[str, Any], *, target_year: str = "") -> int:
     return min(score, 100)
 
 
+def has_ambiguous_numbers_without_target_year(row: Dict[str, Any], *, target_year: str) -> bool:
+    if not target_year or not row.get("matched"):
+        return False
+    if str(row.get("indicator_type") or "").lower() not in {"quantitative", "瀹氶噺"}:
+        return False
+    evidence = str(row.get("evidence") or "").strip()
+    if not evidence or target_year in evidence:
+        return False
+    numbers = [item for item in NUMBER_RE.findall(evidence.replace(",", "")) if not YEAR_RE.fullmatch(item)]
+    return len(numbers) >= 2
+
+
 def validate_year(year: Any, *, target_year: str, matched: bool) -> tuple[str, str]:
     text = str(year or "").strip()
     if not matched:
@@ -146,6 +158,10 @@ def validate_and_score_result(row: Dict[str, Any], *, target_year: str = "2024")
         warnings.append("target_year_not_in_evidence")
 
     score = evidence_score(clean, target_year=target_year)
+    if has_ambiguous_numbers_without_target_year(clean, target_year=target_year):
+        warnings.append("ambiguous_multi_number_evidence_without_target_year")
+        clean["confidence"] = min(float(clean.get("confidence") or 0), 0.45)
+        score = min(score, 45)
     if clean.get("matched") and score < 50:
         warnings.append("weak_evidence")
 

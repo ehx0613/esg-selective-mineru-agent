@@ -108,15 +108,27 @@ def _find_year_aligned_value(
         for index, line in enumerate(lines):
             years = YEAR_RE.findall(line)
             if target_year not in years or len(years) < 2:
-                continue
+                years = []
+                for year_line in lines[index:index + 6]:
+                    year_values = YEAR_RE.findall(year_line)
+                    if len(year_values) != 1 or year_line.strip() != year_values[0]:
+                        break
+                    years.extend(year_values)
+                if target_year not in years or len(years) < 2:
+                    continue
+                search_start = index + len(years)
+            else:
+                search_start = index + 1
             target_index = years.index(target_year)
-            for candidate in lines[index + 1:index + 8]:
-                if not _looks_like_field_line(candidate, field, result):
-                    continue
-                numbers = _number_tokens(candidate)
-                if len(numbers) <= target_index:
-                    continue
-                return numbers[target_index], f"{line} {candidate}"[:160]
+            for offset, candidate in enumerate(lines[search_start:search_start + 10]):
+                if _looks_like_field_line(candidate, field, result):
+                    block = lines[search_start + offset:search_start + offset + 8]
+                    numbers: List[str] = []
+                    for block_line in block:
+                        numbers.extend(_number_tokens(block_line))
+                        if len(numbers) > target_index:
+                            evidence = " ".join([*years, *block])[:160]
+                            return numbers[target_index], evidence
     return "", ""
 
 
