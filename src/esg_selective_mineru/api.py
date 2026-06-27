@@ -128,11 +128,6 @@ if frontend_dir.exists():
     assets_dir = frontend_dir / "assets"
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
-analysis_dir = settings.project_root / "frontend-vue" / "dist"
-if analysis_dir.exists():
-    app.mount("/analysis", StaticFiles(directory=analysis_dir, html=True), name="analysis")
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
