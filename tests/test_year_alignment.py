@@ -78,6 +78,28 @@ def test_align_result_corrects_non_monotonic_pdf_year_order():
     assert "year_aligned_from_table" in aligned["reason"]
 
 
+def test_align_result_ignores_numbers_before_current_field_and_dedupes_years():
+    contexts = {
+        "employee_training_hours": [
+            {
+                "chunk_id": "c1",
+                "text": (
+                    "2020 2020 2021 2021 2022 2022 "
+                    "\u517c\u804c\u5458\u5de5\u4eba\u6570 \u4eba 0 0 0 "
+                    "\u5e74\u5ea6\u57f9\u8bad\u603b\u65f6\u957f \u5c0f\u65f6 35,000 36,500 38,700 "
+                    "\u4e2d\u56fd\u5927\u9646\u5458\u5de5\u4eba\u6570 \u4eba 7,981 8,049 8,276"
+                ),
+            }
+        ]
+    }
+
+    aligned = _align_result_to_target_year(_result(), FIELD, contexts, "2022")
+
+    assert aligned["value"] == "38700"
+    assert aligned["year"] == "2022"
+    assert "year_aligned_from_table" in aligned["reason"]
+
+
 def test_quantitative_result_warns_when_target_year_missing_from_evidence():
     row = {
         "field_key": "employee_training_hours",

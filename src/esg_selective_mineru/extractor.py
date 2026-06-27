@@ -67,6 +67,14 @@ def _number_tokens(text: str) -> List[str]:
     return values
 
 
+def _dedupe_years(years: List[str]) -> List[str]:
+    deduped: List[str] = []
+    for year in years:
+        if year not in deduped:
+            deduped.append(year)
+    return deduped
+
+
 def _field_terms(field: Dict[str, Any]) -> List[str]:
     terms = [str(field.get("name_cn") or ""), str(field.get("field_key") or "")]
     terms.extend(str(item or "") for item in field.get("aliases") or [])
@@ -82,6 +90,20 @@ def _looks_like_field_line(line: str, field: Dict[str, Any], result: Dict[str, A
         return True
     unit = str(result.get("unit") or "").strip()
     return bool(unit and unit in line and _number_tokens(line))
+
+
+def _numbers_from_field_block(lines: List[str], start: int, field: Dict[str, Any], result: Dict[str, Any]) -> List[str]:
+    candidate = lines[start]
+    lowered = candidate.lower()
+    start_at = 0
+    for term in _field_terms(field):
+        position = lowered.find(term)
+        if position >= 0:
+            start_at = max(start_at, position + len(term))
+    numbers = _number_tokens(candidate[start_at:])
+    for block_line in lines[start + 1:start + 8]:
+        numbers.extend(_number_tokens(block_line))
+    return numbers
 
 
 def _find_year_aligned_value(
@@ -123,7 +145,8 @@ def _find_year_aligned_value(
                     continue
                 search_start = index + len(years)
             else:
-                search_start = index + 1
+                search_start = index if _looks_like_field_line(line, field, result) else index + 1
+            years = _dedupe_years(years)
             if len(years) >= 3:
                 numeric_years = [int(year) for year in years]
                 is_ascending = numeric_years == sorted(numeric_years)
@@ -134,12 +157,10 @@ def _find_year_aligned_value(
             for offset, candidate in enumerate(lines[search_start:search_start + 10]):
                 if _looks_like_field_line(candidate, field, result):
                     block = lines[search_start + offset:search_start + offset + 8]
-                    numbers: List[str] = []
-                    for block_line in block:
-                        numbers.extend(_number_tokens(block_line))
-                        if len(numbers) > target_index:
-                            evidence = " ".join([*years, *block])[:160]
-                            return numbers[target_index], evidence
+                    numbers = _numbers_from_field_block(lines, search_start + offset, field, result)
+                    if len(numbers) > target_index:
+                        evidence = " ".join([*years, *block])[:160]
+                        return numbers[target_index], evidence
     return "", ""
 
 
