@@ -84,7 +84,7 @@ def scan_only(pdf_path: Path, output_dir: Path, settings: Settings) -> Dict[str,
     return {"page_scan": scans, "parse_plan": plan, "timing": timer.summary()}
 
 
-def run_pipeline(pdf_path: Path, output_dir: Path, settings: Settings, *, extract: bool = False, use_llm: bool = True) -> Dict[str, Any]:
+def run_pipeline(pdf_path: Path, output_dir: Path, settings: Settings, *, extract: bool = False, use_llm: bool = True, target_year: str = "") -> Dict[str, Any]:
     timer = PipelineTimer()
     with timer.stage("scan"):
         result = scan_only(pdf_path, output_dir, settings)
@@ -118,7 +118,7 @@ def run_pipeline(pdf_path: Path, output_dir: Path, settings: Settings, *, extrac
     extraction = None
     if extract:
         with timer.stage("extract"):
-            extraction = extract_report(pdf_path, output_dir, settings, use_llm=use_llm)
+            extraction = extract_report(pdf_path, output_dir, settings, use_llm=use_llm, target_year=target_year)
         summary["extraction"] = extraction["summary"]
 
     summary["timing"] = timer.summary()

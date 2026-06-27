@@ -15,8 +15,8 @@ class LLMClient:
         self.settings = settings
         self.client = OpenAI(api_key=settings.dashscope_api_key, base_url=settings.openai_base_url)
 
-    def extract_fields(self, fields: List[Dict[str, Any]], contexts: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-        prompt = _build_prompt(fields, contexts)
+    def extract_fields(self, fields: List[Dict[str, Any]], contexts: Dict[str, List[Dict[str, Any]]], *, target_year: str = "") -> List[Dict[str, Any]]:
+        prompt = _build_prompt(fields, contexts, target_year=target_year)
         completion = self.client.chat.completions.create(
             model=self.settings.text_model,
             messages=[
@@ -46,7 +46,7 @@ def _compact_field(field: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _build_prompt(fields: List[Dict[str, Any]], contexts: Dict[str, List[Dict[str, Any]]]) -> str:
+def _build_prompt(fields: List[Dict[str, Any]], contexts: Dict[str, List[Dict[str, Any]]], *, target_year: str = "") -> str:
     compact_fields = [_compact_field(field) for field in fields]
     compact_contexts: Dict[str, List[Dict[str, Any]]] = {}
     for field in fields:
@@ -66,7 +66,7 @@ def _build_prompt(fields: List[Dict[str, Any]], contexts: Dict[str, List[Dict[st
         "要求：\n"
         "1. 每个字段必须返回一条结果。\n"
         "2. matched=false 表示未披露或证据不足。\n"
-        "3. 定量字段优先抽取 value、unit、year；定性字段给出 summary。\n"
+        f"3. 优先抽取报告目标年份 {target_year or '报告披露年份'} 对应的数据；定量字段优先抽取 value、unit、year；定性字段给出 summary。\n"
         "4. evidence 必须是证据中的短句，不超过 80 字。\n"
         "5. confidence 取 0-1。\n"
         "6. 只输出 JSON：{\"results\":[...]}。\n\n"

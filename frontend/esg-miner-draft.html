@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESG Miner 草稿</title>
+  <style>
+    :root {
+      --ink: #1d1d1f;
+      --muted: #6e6e73;
+      --line: rgba(29, 29, 31, 0.12);
+      --blue: #0071e3;
+      --green: #18a96b;
+      --silver: #f5f5f7;
+      --surface: rgba(255, 255, 255, 0.78);
+      --radius: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: #fff;
+      color: var(--ink);
+      font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+      letter-spacing: 0;
+    }
+
+    button {
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 52px;
+      padding: 0 clamp(20px, 6vw, 78px);
+      border-bottom: 1px solid rgba(29, 29, 31, 0.08);
+      background: rgba(251, 251, 253, 0.78);
+      backdrop-filter: blur(18px);
+    }
+
+    .brand {
+      display: inline-flex;
+      gap: 2px;
+      align-items: baseline;
+      color: var(--ink);
+      font-size: 20px;
+      font-weight: 800;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .brand span:last-child {
+      color: var(--green);
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .nav a {
+      color: #3a3a3c;
+      text-decoration: none;
+    }
+
+    .nav a:last-child {
+      color: var(--blue);
+    }
+
+    .hero {
+      position: relative;
+      min-height: calc(100vh - 52px);
+      padding: 82px 24px 28px;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 74% 30%, rgba(24, 169, 107, 0.22), transparent 28%),
+        radial-gradient(circle at 50% 78%, rgba(0, 113, 227, 0.13), transparent 28%),
+        linear-gradient(180deg, #fbfbfd 0%, #f5f5f7 62%, #fff 100%);
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(rgba(29, 29, 31, 0.032) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(29, 29, 31, 0.032) 1px, transparent 1px);
+      background-size: 72px 72px;
+      mask-image: radial-gradient(circle at 72% 44%, #000 0, transparent 54%);
+      pointer-events: none;
+    }
+
+    .hero-inner {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      justify-items: center;
+      text-align: center;
+      width: min(1180px, 100%);
+      margin: 0 auto;
+    }
+
+    .kicker {
+      margin: 0 0 14px;
+      color: var(--green);
+      font-size: 15px;
+      font-weight: 800;
+    }
+
+    h1 {
+      max-width: 900px;
+      margin: 0;
+      font-size: clamp(46px, 7.3vw, 88px);
+      line-height: 1.04;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+
+    .gradient-text {
+      background: linear-gradient(90deg, #18a96b 0%, #0071e3 78%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    .lead {
+      max-width: 760px;
+      margin: 22px 0 0;
+      color: var(--muted);
+      font-size: 20px;
+      line-height: 1.7;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 30px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 0 23px;
+      border: 1px solid rgba(29, 29, 31, 0.16);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 800;
+      box-shadow: 0 10px 28px rgba(29, 29, 31, 0.06);
+    }
+
+    .button.primary {
+      border-color: var(--blue);
+      background: var(--blue);
+      color: #fff;
+      box-shadow: 0 16px 34px rgba(0, 113, 227, 0.22);
+    }
+
+    .device {
+      position: relative;
+      width: min(1030px, 100%);
+      margin-top: 58px;
+      padding: 12px;
+      border: 1px solid rgba(29, 29, 31, 0.12);
+      border-radius: 30px;
+      background: linear-gradient(145deg, rgba(255,255,255,0.96), rgba(255,255,255,0.58));
+      box-shadow: 0 40px 95px rgba(29, 29, 31, 0.16);
+      backdrop-filter: blur(22px);
+    }
+
+    .screen {
+      display: grid;
+      grid-template-columns: 210px minmax(0, 1fr);
+      min-height: 450px;
+      overflow: hidden;
+      border: 1px solid rgba(29, 29, 31, 0.08);
+      border-radius: 20px;
+      background: #fff;
+      text-align: left;
+    }
+
+    .sidebar {
+      padding: 20px;
+      background: var(--silver);
+    }
+
+    .side-title {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .side-item {
+      min-height: 38px;
+      margin-bottom: 8px;
+      padding: 10px 12px;
+      border-radius: var(--radius);
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .side-item.active {
+      background: #fff;
+      color: var(--ink);
+      box-shadow: 0 8px 22px rgba(29, 29, 31, 0.08);
+    }
+
+    .workspace {
+      padding: 24px;
+      min-width: 0;
+    }
+
+    .workspace-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      margin-bottom: 18px;
+    }
+
+    .workspace-head p {
+      margin: 0 0 6px;
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .workspace-head h2 {
+      margin: 0;
+      font-size: 28px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: #eaf7f1;
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .stat {
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fbfbfd;
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 28px;
+    }
+
+    .stat span {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    th,
+    td {
+      padding: 13px 14px;
+      border-bottom: 1px solid rgba(29, 29, 31, 0.08);
+      font-size: 13px;
+      vertical-align: middle;
+    }
+
+    th {
+      background: #f5f5f7;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 0 9px;
+      border-radius: 999px;
+      background: #eaf7f1;
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .section {
+      width: min(1120px, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 76px 0;
+    }
+
+    .section-title {
+      display: grid;
+      justify-items: center;
+      text-align: center;
+      margin-bottom: 28px;
+    }
+
+    .section-title h2 {
+      max-width: 780px;
+      margin: 0;
+      font-size: clamp(32px, 5vw, 56px);
+      line-height: 1.12;
+      font-weight: 900;
+    }
+
+    .section-title p {
+      max-width: 720px;
+      margin: 18px 0 0;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.7;
+    }
+
+    .features {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .feature {
+      min-height: 210px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #fbfbfd;
+    }
+
+    .feature strong {
+      color: var(--green);
+      font-size: 14px;
+    }
+
+    .feature h3 {
+      margin: 18px 0 10px;
+      font-size: 22px;
+    }
+
+    .feature p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    @media (max-width: 900px) {
+      .nav {
+        display: none;
+      }
+
+      .hero {
+        padding-top: 58px;
+      }
+
+      .screen,
+      .stats,
+      .features {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        display: none;
+      }
+
+      .workspace-head {
+        display: grid;
+      }
+
+      table {
+        min-width: 680px;
+      }
+
+      .workspace {
+        overflow-x: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#"><span>ESG</span><span>Miner</span></a>
+    <nav class="nav" aria-label="主导航">
+      <a href="#capabilities">核心能力</a>
+      <a href="#console">工作台</a>
+      <a href="#scenario">比赛展示</a>
+      <a href="#console">进入演示</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-inner">
+        <p class="kicker">ESG 报告多模态智能抽取平台</p>
+        <h1>把复杂报告，变成<br><span class="gradient-text">可信赖的数据资产。</span></h1>
+        <p class="lead">
+          ESG Miner 面向中国上市公司 ESG 报告，自动解析 PDF 中的文本、表格和证据片段，
+          输出可复核、可追溯、可对比的结构化指标数据。
+        </p>
+        <div class="actions">
+          <button class="button primary">上传报告</button>
+          <button class="button">查看抽取示例</button>
+        </div>
+
+        <div id="console" class="device" aria-label="ESG Miner 工作台预览">
+          <div class="screen">
+            <aside class="sidebar">
+              <p class="side-title">ESG MINER</p>
+              <div class="side-item active">总览</div>
+              <div class="side-item">报告管理</div>
+              <div class="side-item">结果复核</div>
+              <div class="side-item">指标对比</div>
+              <div class="side-item">导出中心</div>
+            </aside>
+            <section class="workspace">
+              <div class="workspace-head">
+                <div>
+                  <p>智能工作台</p>
+                  <h2>项目总览</h2>
+                </div>
+                <span class="pill">演示数据</span>
+              </div>
+              <div class="stats">
+                <div class="stat"><strong>128</strong><span>历史报告任务</span></div>
+                <div class="stat"><strong>94%</strong><span>平均字段置信度</span></div>
+                <div class="stat"><strong>36</strong><span>待人工复核字段</span></div>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>报告名称</th>
+                    <th>企业</th>
+                    <th>年份</th>
+                    <th>状态</th>
+                    <th>证据链</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>可持续发展报告 2024</td>
+                    <td>示例能源集团</td>
+                    <td>2024</td>
+                    <td><span class="status">已完成</span></td>
+                    <td>字段值、页码、原文片段</td>
+                  </tr>
+                  <tr>
+                    <td>环境、社会及治理报告</td>
+                    <td>示例制造股份</td>
+                    <td>2023</td>
+                    <td><span class="status">待复核</span></td>
+                    <td>低置信度字段优先处理</td>
+                  </tr>
+                  <tr>
+                    <td>社会责任报告</td>
+                    <td>示例科技有限公司</td>
+                    <td>2022</td>
+                    <td><span class="status">已筛选</span></td>
+                    <td>保留跳过原因</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="capabilities" class="section">
+      <div class="section-title">
+        <h2>从 PDF 到指标，从结果到证据。</h2>
+        <p>苹果风格的重点是克制和清晰：少量文字、明确层级、大面积留白，让系统能力自己显得专业。</p>
+      </div>
+      <div class="features">
+        <article class="feature">
+          <strong>01</strong>
+          <h3>报告智能筛选</h3>
+          <p>自动识别 ESG 报告、社会责任报告、鉴证声明等文件类型，减少无效 PDF 进入抽取流程。</p>
+        </article>
+        <article class="feature">
+          <strong>02</strong>
+          <h3>多模态指标抽取</h3>
+          <p>结合 MinerU 解析结果、页面证据与指标体系，抽取环境、社会、治理三类结构化字段。</p>
+        </article>
+        <article class="feature">
+          <strong>03</strong>
+          <h3>证据复核与对比</h3>
+          <p>每个字段保留来源页码、证据片段和置信度，支持确认、驳回、修改和多公司横向比较。</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="scenario" class="section">
+      <div class="section-title">
+        <h2>更适合比赛答辩的产品表达。</h2>
+        <p>首页负责建立第一印象，工作台负责证明系统真的能用。整体会比深色版本更明亮、更轻、更像成熟产品发布页。</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

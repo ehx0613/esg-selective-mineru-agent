@@ -5,6 +5,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -19,6 +20,7 @@ node_modules/
 dist/
 build/
 .vite/
+*.tsbuildinfo
 
 data/
 output/

@@ -66,7 +66,8 @@ def write_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
             writer.writerow({column: row.get(column, "") for column in columns})
 
 
-def extract_report(pdf_path: Path, output_dir: Path, settings: Settings, *, use_llm: bool = True) -> Dict[str, Any]:
+def extract_report(pdf_path: Path, output_dir: Path, settings: Settings, *, use_llm: bool = True, target_year: str = "") -> Dict[str, Any]:
+    active_year = target_year or settings.target_report_year
     fields = load_a_share_schema(settings.original_esg_project_root)
     mineru_root = settings.mineru_output_root if settings.mineru_output_root.exists() else None
     chunks = build_rag_chunks(pdf_path, mineru_root)
@@ -112,7 +113,7 @@ def extract_report(pdf_path: Path, output_dir: Path, settings: Settings, *, use_
                 results.extend(_empty_result(field, "llm_call_budget_exhausted") for field in batch)
                 continue
             try:
-                raw_results = client.extract_fields(batch, contexts)
+                raw_results = client.extract_fields(batch, contexts, target_year=active_year)
                 by_key = {item.get("field_key"): item for item in raw_results if isinstance(item, dict)}
                 for field in batch:
                     results.append(_normalize_result(by_key.get(field["field_key"], {}), field))
@@ -121,10 +122,10 @@ def extract_report(pdf_path: Path, output_dir: Path, settings: Settings, *, use_
                 results.extend(_empty_result(field, f"llm_error:{exc}") for field in batch)
             llm_calls += 1
 
-    results = enrich_results(results, pdf_path=pdf_path, target_year=settings.target_report_year)
+    results = enrich_results(results, pdf_path=pdf_path, target_year=active_year)
     summary = {
         "pdf": str(pdf_path),
-        "target_year": settings.target_report_year,
+        "target_year": active_year,
         "schema": schema_summary(fields),
         "chunks": len(chunks),
         "retriever_mode": settings.retriever_mode,

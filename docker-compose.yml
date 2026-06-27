@@ -1,7 +1,22 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: esg-selective-mineru-postgres
+    environment:
+      POSTGRES_DB: esg_mineru
+      POSTGRES_USER: esg
+      POSTGRES_PASSWORD: esg_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
   api:
     build: .
     container_name: esg-selective-mineru-api
+    depends_on:
+      - postgres
     ports:
       - "8000:8000"
     env_file:
@@ -9,8 +24,12 @@ services:
     environment:
       PYTHONPATH: /app/src
       MINERU_OUTPUT_ROOT: /app/output/mineru_cache
+      DATABASE_URL: postgresql://esg:esg_password@postgres:5432/esg_mineru
     volumes:
       - ./data:/app/data
       - ./output:/app/output
       - ./configs:/app/configs:ro
     restart: unless-stopped
+
+volumes:
+  postgres_data:

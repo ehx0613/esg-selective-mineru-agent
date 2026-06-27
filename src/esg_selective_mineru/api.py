@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import re
 import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Dict, Literal
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
@@ -42,6 +44,7 @@ class BatchCreateJobResponse(BaseModel):
 
 class JobDetail(BaseModel):
     job_id: str
+    report_id: str = ""
     status: JobStatus
     mode: JobMode
     pdf_path: str
@@ -51,6 +54,14 @@ class JobDetail(BaseModel):
     updated_at: str
     error: str = ""
     summary: Dict[str, Any] = Field(default_factory=dict)
+    report_filename: str = ""
+    company_name: str = ""
+    stock_code: str = ""
+    report_year: str = ""
+    started_at: str = ""
+    finished_at: str = ""
+    duration_seconds: float | None = None
+    timing: Dict[str, Any] = Field(default_factory=dict)
 
 
 class JobListResponse(BaseModel):
@@ -71,6 +82,21 @@ class ReviewRecord(ReviewUpdate):
     updated_at: str
 
 
+class ReportMetadataUpdate(BaseModel):
+    company_name: str = ""
+    stock_code: str = ""
+    report_year: str = ""
+
+
+class ReportMetadata(BaseModel):
+    report_id: str
+    filename: str = ""
+    company_name: str = ""
+    stock_code: str = ""
+    report_year: str = ""
+    updated_at: str
+
+
 settings = load_settings()
 
 
@@ -82,7 +108,7 @@ def _database_path() -> Path:
     return settings.project_root / "data" / "esg_jobs.db"
 
 
-job_store = JobStore(_database_path())
+job_store = JobStore(_database_path(), settings.database_url)
 app = FastAPI(
     title="ESG Selective MinerU API",
     version="0.1.0",
@@ -102,6 +128,9 @@ if frontend_dir.exists():
     assets_dir = frontend_dir / "assets"
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+analysis_dir = settings.project_root / "frontend-vue" / "dist"
+if analysis_dir.exists():
+    app.mount("/analysis", StaticFiles(directory=analysis_dir, html=True), name="analysis")
 
 
 def _now() -> str:
@@ -143,16 +172,58 @@ def _write_report_for_job(job: Dict[str, Any], filename: str = "") -> None:
     now = job.get("created_at") or _now()
     pdf_path = str(job.get("pdf_path") or "")
     report_id = str(job.get("report_id") or job.get("file_sha256") or job["job_id"])
+    report_filename = filename or Path(pdf_path).name
+    inferred = _infer_report_metadata(report_filename)
     job["report_id"] = report_id
     job_store.upsert_report({
         "report_id": report_id,
-        "filename": filename or Path(pdf_path).name,
+        "filename": report_filename,
         "file_sha256": job.get("file_sha256", ""),
         "pdf_path": pdf_path,
         "upload_bytes": job.get("upload_bytes", 0),
+        "company_name": job.get("company_name") or inferred["company_name"],
+        "stock_code": job.get("stock_code") or inferred["stock_code"],
+        "report_year": job.get("report_year") or inferred["report_year"],
         "created_at": now,
         "updated_at": job.get("updated_at") or now,
     })
+
+
+def _infer_report_metadata(filename: str) -> Dict[str, str]:
+    stem = Path(filename).stem
+    stem = re.sub(r"^[a-f0-9]{16,}_?", "", stem, flags=re.IGNORECASE)
+    parts = [part.strip() for part in re.split(r"[_\-\s]+", stem) if part.strip()]
+    stock_code = ""
+    company_name = ""
+    report_year = _infer_report_year(filename)
+    if parts and re.fullmatch(r"\d{6}", parts[0]):
+        stock_code = parts[0]
+        if len(parts) >= 2 and not re.fullmatch(r"20[12]\d", parts[1]):
+            company_name = parts[1]
+    if not company_name:
+        company_name = _infer_company_name(filename, report_year)
+        if stock_code and company_name.startswith(stock_code):
+            company_name = company_name.removeprefix(stock_code).strip()
+    return {
+        "stock_code": stock_code,
+        "company_name": company_name,
+        "report_year": report_year,
+    }
+
+
+def _infer_report_year(filename: str) -> str:
+    match = re.search(r"(20[12]\d)", filename)
+    return match.group(1) if match else settings.target_report_year
+
+
+def _infer_company_name(filename: str, year: str = "") -> str:
+    name = Path(filename).stem
+    name = re.sub(r"^[a-f0-9]{16,}_?", "", name, flags=re.IGNORECASE)
+    if year:
+        name = name.replace(year, "")
+    name = re.sub(r"(年度)?(ESG|环境、社会及治理|环境社会及治理|可持续发展|社会责任|报告|年报).*", "", name, flags=re.IGNORECASE)
+    name = re.sub(r"[_\-\s（）()【】\[\]]+", " ", name).strip()
+    return name or Path(filename).stem
 
 
 def _sync_job_artifacts(job: Dict[str, Any]) -> None:
@@ -187,9 +258,27 @@ def _sync_extraction_results(job: Dict[str, Any]) -> list[Dict[str, Any]]:
     rows = read_json(path)
     if not isinstance(rows, list):
         raise HTTPException(status_code=500, detail="invalid_results_format")
-    rows = enrich_results(rows, pdf_path=job.get("pdf_path", ""), target_year=settings.target_report_year)
-    job_store.upsert_extraction_results(job_id, rows, _now())
+    rows = enrich_results(rows, pdf_path=job.get("pdf_path", ""), target_year=_job_target_year(job))
+    job_store.upsert_extraction_results(job_id, rows, _now(), str(job.get("report_id") or ""))
     return rows
+
+
+def _job_target_year(job: Dict[str, Any]) -> str:
+    return str(job.get("report_year") or job.get("summary", {}).get("target_year") or settings.target_report_year).strip()
+
+
+def _finish_job_timing(job: Dict[str, Any], started_monotonic: float) -> None:
+    job["finished_at"] = _now()
+    duration = round(perf_counter() - started_monotonic, 3)
+    summary_timing = job.get("summary", {}).get("timing", {})
+    if isinstance(summary_timing, dict) and summary_timing.get("total_seconds") is not None:
+        try:
+            duration = round(float(summary_timing.get("total_seconds") or duration), 3)
+        except (TypeError, ValueError):
+            pass
+    timing = summary_timing if isinstance(summary_timing, dict) else {}
+    job["duration_seconds"] = duration
+    job["timing"] = {"total_seconds": duration, **timing}
 
 
 def _read_job(job_id: str) -> Dict[str, Any]:
@@ -441,7 +530,12 @@ async def _create_job_from_upload(
 
 def _run_job(job_id: str) -> None:
     job = _read_job(job_id)
+    started_monotonic = perf_counter()
     job["status"] = "running"
+    job["started_at"] = _now()
+    job["finished_at"] = ""
+    job["duration_seconds"] = None
+    job["timing"] = {}
     _write_job(job)
     pdf_path = Path(job["pdf_path"])
     output_dir = Path(job["output_dir"])
@@ -451,6 +545,7 @@ def _run_job(job_id: str) -> None:
             job["status"] = "skipped"
             job["error"] = ""
             job["summary"] = {"skipped": True, **suitability}
+            _finish_job_timing(job, started_monotonic)
             write_json(output_dir / "skip_report.json", job["summary"])
             write_json(output_dir / "run_summary.json", job["summary"])
             _write_job(job)
@@ -466,7 +561,7 @@ def _run_job(job_id: str) -> None:
                 "timing": result.get("timing", {}),
             }
         elif mode == "extract":
-            result = extract_report(pdf_path, output_dir, settings, use_llm=bool(job["use_llm"]))
+            result = extract_report(pdf_path, output_dir, settings, use_llm=bool(job["use_llm"]), target_year=_job_target_year(job))
             job["summary"] = result["summary"]
         else:
             result = run_pipeline(
@@ -475,13 +570,16 @@ def _run_job(job_id: str) -> None:
                 settings,
                 extract=True,
                 use_llm=bool(job["use_llm"]),
+                target_year=_job_target_year(job),
             )
             job["summary"] = result.get("summary", {})
         job["status"] = "succeeded"
+        _finish_job_timing(job, started_monotonic)
         _sync_extraction_results(job)
     except Exception as exc:
         job["status"] = "failed"
         job["error"] = str(exc)
+        _finish_job_timing(job, started_monotonic)
     _write_job(job)
     _sync_job_artifacts(job)
 
@@ -568,6 +666,20 @@ def delete_job(job_id: str) -> Dict[str, Any]:
     return {"deleted": True, "job_id": job_id}
 
 
+@app.put("/reports/{report_id}/metadata", response_model=ReportMetadata)
+def update_report_metadata(report_id: str, payload: ReportMetadataUpdate) -> Dict[str, Any]:
+    record = job_store.update_report_metadata(
+        report_id,
+        company_name=payload.company_name.strip(),
+        stock_code=payload.stock_code.strip(),
+        report_year=payload.report_year.strip(),
+        updated_at=_now(),
+    )
+    if record is None:
+        raise HTTPException(status_code=404, detail="report_not_found")
+    return record
+
+
 @app.get("/jobs/{job_id}/results")
 def get_job_results(job_id: str) -> Any:
     return _load_result_rows(job_id)
@@ -620,3 +732,29 @@ def export_job_csv(job_id: str) -> FileResponse:
 def get_job_artifacts(job_id: str) -> Dict[str, Any]:
     _read_job(job_id)
     return {"artifacts": job_store.list_artifacts(job_id)}
+
+
+@app.get("/metrics/options")
+def get_metric_options() -> Dict[str, Any]:
+    return job_store.metric_options()
+
+
+@app.get("/metrics/compare")
+def compare_metrics(
+    year: str = "",
+    field_key: str = "",
+    report_ids: str = "",
+) -> Dict[str, Any]:
+    selected_report_ids = [item.strip() for item in report_ids.split(",") if item.strip()]
+    rows = job_store.compare_metrics(year=year, field_key=field_key, report_ids=selected_report_ids)
+    return {"rows": rows}
+
+
+@app.get("/metrics/trend")
+def trend_metrics(
+    report_id: str = "",
+    company_name: str = "",
+    field_key: str = "",
+) -> Dict[str, Any]:
+    rows = job_store.trend_metrics(report_id=report_id, company_name=company_name, field_key=field_key)
+    return {"rows": rows}

@@ -1,123 +1,173 @@
 # ESG 报告智能解析与指标抽取系统技术文档
 
-## 1. 技术路线
+## 目录
 
-### 1.1 处理流程
+1. 技术路线总览  
+2. 系统总体架构  
+3. 技术栈说明  
+4. 数据采集与报告预处理技术  
+5. 页级快扫与选择性 MinerU 解析技术  
+6. ESG 指标体系与 Schema 管理  
+7. RAG 文本块构建与证据召回技术  
+8. 大模型结构化抽取技术  
+9. 质量校验与人工复核技术  
+10. 数据存储与任务管理技术  
+11. 后端 API 技术设计  
+12. React 前端与 ECharts 可视化技术  
+13. 系统部署与运行配置  
+14. 测试与评估  
+15. 技术小结与后续优化  
 
-系统整体技术路线如下：
+## 1. 技术路线总览
+
+### 1.1 整体处理流程
+
+本系统以 ESG 报告 PDF 为输入，以字段级结构化数据、证据链、人工复核结果和可视化分析结果为输出。系统没有直接对整份 PDF 做高成本深度解析，而是先通过轻量快扫定位高价值页面，再对重点页面进行 MinerU 解析和字段级证据召回，最后由大模型完成结构化抽取。
+
+【图 1-1 系统整体处理流程图，建议绘制从 PDF 上传到 CSV/可视化输出的全链路流程】
 
 ```text
-PDF 报告上传或采集
+PDF 报告上传 / 批量导入
         ↓
-报告类型过滤与有效性判断
+报告有效性识别
         ↓
 PyMuPDF 页级快扫
         ↓
-生成重点页面解析计划
+重点页解析计划生成
         ↓
-选择性调用 MinerU
+选择性 MinerU 解析
         ↓
-构建 RAG 文本块
+RAG 文本块构建
         ↓
 字段级证据召回
         ↓
 大模型结构化抽取
         ↓
-年份、单位、证据质量校验
+质量校验与复核优先级计算
         ↓
-人工复核与修正
+人工复核与结果修正
         ↓
-JSON / CSV 导出
+JSON / CSV / 指标分析输出
 ```
 
-该流程以 PDF 报告为输入，以字段级 JSON、CSV 和人工复核结果为输出。系统先用轻量工具完成全篇扫描，再将 MinerU 和大模型调用集中到重点页面、重点字段和候选证据上。
+该流程中，各模块的职责相对独立。页级快扫负责判断“哪些页面值得深度解析”，RAG 召回负责判断“每个字段应该看哪些证据”，大模型抽取负责判断“证据中是否披露该字段以及具体值是什么”，质量校验和人工复核负责保证最终结果可检查、可修正、可导出。
 
-### 1.2 核心技术点
+### 1.2 核心技术组成
 
-本系统的核心技术点包括：
-
-1. 选择性 MinerU 解析  
-   系统不对整份 PDF 进行无差别深度解析，而是先通过 PyMuPDF 提取页级文本、数值密度、表格线索和 ESG 关键词，再选择重点页面调用 MinerU。
-
-2. 字段级 RAG 证据召回  
-   系统围绕每一个 ESG 指标单独召回候选证据块，抽取结果包含字段值、证据原文、来源页码和 chunk_id。
-
-3. 混合召回机制  
-   召回模块支持 BM25、无外部依赖的本地向量召回，以及基于 OpenAI-compatible Embedding API 的向量召回，并通过 RRF 融合排序，提高不同表述方式下的证据命中能力。
-
-4. 质量校验与复核闭环  
-   抽取完成后，系统会对年份、单位、证据质量和置信度进行校验，自动计算复核优先级，并在前端提供人工确认、驳回、编辑和 CSV 导出功能。
+| 技术环节 | 采用技术 | 主要作用 |
+| --- | --- | --- |
+| PDF 快扫 | PyMuPDF | 快速提取页级文本、关键词、数值密度和表格线索 |
+| 重点页解析 | MinerU | 解析表格页、图文混排页和复杂版式页 |
+| 解析计划 | 规则评分 + 阈值控制 | 判断哪些页面进入 MinerU |
+| 证据召回 | BM25 + Embedding + RRF | 为每个 ESG 字段召回候选证据 |
+| 结构化抽取 | OpenAI-compatible LLM | 输出字段值、单位、年份、证据和置信度 |
+| 质量校验 | 年份/单位/证据规则 | 标记异常结果并计算复核优先级 |
+| 数据存储 | SQLite / PostgreSQL | 存储报告、任务、结果、复核记录和产物索引 |
+| 后端服务 | FastAPI | 提供上传、查询、复核、导出和指标分析接口 |
+| 前端展示 | React + TypeScript + Vite | 报告管理、结果复核、指标对比和导出 |
+| 可视化 | ECharts | 展示定量指标横向对比和趋势分析 |
 
 ## 2. 系统总体架构
 
-### 2.1 架构设计
+### 2.1 架构分层
 
-本项目采用“Python 后端处理流水线 + FastAPI 服务 + React 前端界面”的模块化架构。后端负责 PDF 解析、指标抽取、任务管理和结果存储，前端负责报告上传、任务查看、结果复核、指标对比和导出。
+系统采用前后端分离、模块化流水线的设计方式。后端负责 PDF 处理、任务调度、数据存储和接口服务，前端负责交互展示、复核操作和可视化分析。
 
-系统主要由以下模块组成：
+【图 2-1 系统架构图，建议绘制前端展示层、接口服务层、核心算法层、数据存储层四层架构】
 
-| 模块 | 主要职责 |
+```text
+前端展示层
+React + TypeScript + ECharts
+
+接口服务层
+FastAPI + BackgroundTasks
+
+核心算法层
+PyMuPDF + MinerU + Retriever + LLM Extractor + Quality Checker
+
+数据存储层
+本地文件 + SQLite / PostgreSQL
+```
+
+### 2.2 模块职责
+
+| 模块 | 对应文件 | 职责 |
+| --- | --- | --- |
+| API 服务 | `src/esg_selective_mineru/api.py` | 创建任务、查询状态、返回结果、保存复核、导出 CSV、提供分析接口 |
+| 流水线调度 | `src/esg_selective_mineru/pipeline.py` | 串联快扫、解析、抽取和产物写出流程 |
+| PDF 快扫 | `src/esg_selective_mineru/page_scan.py` | 提取页级文本、关键词、数值密度、表格线索 |
+| 解析计划 | `src/esg_selective_mineru/parse_plan.py` | 根据页级特征选择 MinerU 页面 |
+| MinerU 调用 | `src/esg_selective_mineru/mineru_runner.py` | 调用 MinerU 命令并记录解析结果 |
+| 灰区页复判 | `src/esg_selective_mineru/mineru_page_judge.py` | 对不确定页面进行 LLM 复判 |
+| 文本块构建 | `src/esg_selective_mineru/chunks.py` | 构建 RAG 检索文本块 |
+| 证据召回 | `src/esg_selective_mineru/retriever.py` | BM25、Embedding 向量召回和 RRF 融合 |
+| 字段抽取 | `src/esg_selective_mineru/extractor.py` | 加载 schema、召回证据、调用模型、写出结果 |
+| 模型接口 | `src/esg_selective_mineru/llm_client.py` | 构造 prompt 并调用 OpenAI-compatible API |
+| 质量校验 | `src/esg_selective_mineru/quality.py` | 年份、单位、证据质量和复核优先级辅助字段 |
+| 数据存储 | `src/esg_selective_mineru/job_store.py` | SQLite / PostgreSQL 双后端任务存储 |
+| React 前端 | `frontend-react/` | 报告管理、结果复核、指标对比、图表分析和导出 |
+
+## 3. 技术栈说明
+
+### 3.1 后端技术栈
+
+| 技术 | 版本或类型 | 用途 |
+| --- | --- | --- |
+| Python | 3.11+ | 后端主要开发语言 |
+| FastAPI | 0.115+ | 提供 HTTP API 服务 |
+| Uvicorn | 0.30+ | ASGI 服务运行器 |
+| PyMuPDF | 1.24+ | PDF 文本层读取和页级快扫 |
+| MinerU | 外部解析工具 | 复杂 PDF 页面解析 |
+| OpenAI SDK | 1.40+ | 调用 OpenAI-compatible 文本模型和 embedding 模型 |
+| psycopg | 3.2+ | PostgreSQL 数据库连接 |
+| python-dotenv | 1.0+ | 读取 `.env` 配置 |
+| python-multipart | 0.0.9+ | 支持 FastAPI 文件上传 |
+
+### 3.2 前端技术栈
+
+| 技术 | 版本或类型 | 用途 |
+| --- | --- | --- |
+| React | 19 | 前端交互界面 |
+| TypeScript | 5.9 | 类型约束和工程化开发 |
+| Vite | 8 | 前端构建工具 |
+| ECharts | 6 | 指标对比和趋势图表 |
+| CSS | 原生 CSS | 页面布局和样式 |
+
+### 3.3 数据库与部署技术栈
+
+| 技术 | 用途 |
 | --- | --- |
-| 数据采集模块 | 批量采集 A 股 ESG PDF 报告，生成报告清单 |
-| 报告过滤模块 | 判断上传文件是否为完整 ESG 报告，过滤鉴证声明、摘要、传统社会责任报告等异常输入 |
-| 页级快扫模块 | 使用 PyMuPDF 提取页级文本、关键词、数值密度和表格线索 |
-| 解析计划模块 | 根据页级特征选择 MinerU 重点解析页面 |
-| MinerU 调度模块 | 对重点页面或报告调用 MinerU，并缓存解析产物 |
-| RAG 构建模块 | 结合 PyMuPDF 和 MinerU 文本构建可检索文本块 |
-| 证据召回模块 | 按 ESG 字段定义召回候选证据 |
-| 大模型抽取模块 | 调用文本模型输出结构化字段结果 |
-| 质量评估模块 | 对年份、单位、证据和置信度进行检查 |
-| API 服务模块 | 提供上传、任务查询、结果查询、复核和导出接口 |
-| 前端展示模块 | 提供报告管理、字段复核、指标对比和导出页面 |
+| SQLite | 本地轻量任务存储，适合单机测试 |
+| PostgreSQL 16 | 生产化关系型存储，支持多报告、多指标分析查询 |
+| Docker | 构建后端与前端运行镜像 |
+| Docker Compose | 同时启动 API 服务和 PostgreSQL 服务 |
+| JSON / CSV | 系统主要中间产物和最终导出格式 |
 
-### 2.2 技术栈
+## 4. 数据采集与报告预处理技术
 
-| 类别 | 技术 |
-| --- | --- |
-| 编程语言 | Python 3.11、TypeScript |
-| PDF 解析 | PyMuPDF、MinerU |
-| 后端框架 | FastAPI、Uvicorn |
-| 大模型接口 | OpenAI-compatible API、DashScope |
-| 召回算法 | BM25、本地字符 n-gram TF-IDF、Embedding 向量召回、RRF 融合 |
-| 数据存储 | 本地文件、SQLite 任务记录 |
-| 前端框架 | React、Vite |
-| 输出格式 | JSON、CSV |
-| 部署方式 | 本地运行、Docker Compose |
+### 4.1 批量报告采集
 
-### 2.3 目录结构
+报告采集脚本位于 `scripts/collect_a_share_esg_reports.py`。该脚本用于采集 A 股上市公司 ESG 报告 PDF，并生成报告清单。清单中记录证券代码、公司名称、公告标题、PDF URL 和本地路径，后续预处理和批量抽取都可以基于该清单运行。
 
-项目核心目录如下：
-
-| 路径 | 说明 |
-| --- | --- |
-| `src/esg_selective_mineru/` | 后端核心代码 |
-| `scripts/` | 数据采集、预处理和辅助脚本 |
-| `frontend-react/` | React 前端工程 |
-| `frontend/` | 静态前端备用页面 |
-| `configs/` | 环境变量示例配置 |
-| `tests/` | 单元测试 |
-| `docs/` | 项目文档 |
-| `output/` | 运行输出目录 |
-| `data/` | 上传文件、采集数据和任务数据库目录 |
-
-## 3. 数据采集与预处理
-
-### 3.1 ESG 报告采集
-
-系统提供 `collect_a_share_esg_reports.py` 脚本，用于采集不少于 100 份 A 股 ESG PDF 报告。采集结果包括原始 PDF 文件和报告清单。报告清单记录证券代码、公司名称、公告标题、PDF URL 和本地保存路径，为后续批量处理提供基础数据。
-
-采集产物主要包括：
+【图 4-1 报告采集流程图，建议展示检索、下载、保存 PDF、写入 manifest 的过程】
 
 | 产物 | 说明 |
 | --- | --- |
-| `raw/` | 原始 PDF 文件 |
-| `a_share_esg_reports_manifest.csv` | 报告清单 |
+| `data/a_share_esg_reports/raw/` | 原始 PDF 文件 |
+| `data/a_share_esg_reports/a_share_esg_reports_manifest.csv` | 报告清单 |
 
-### 3.2 PDF 预处理
+### 4.2 PDF 预处理
 
-采集到的 PDF 报告进入预处理阶段。系统会对报告进行统一命名、页级文本提取、页级特征扫描、重点页面规划和文本块构建，为后续抽取做准备。
+PDF 预处理脚本位于 `scripts/preprocess_esg_pdfs.py`。该阶段负责把采集到的 PDF 转换为后续流水线可直接使用的中间产物，包括页级文本、页级扫描结果、解析计划和初始文本块。
 
-预处理产物包括：
+预处理阶段的主要步骤如下：
+
+1. 读取报告清单。
+2. 对 PDF 进行统一命名和保存。
+3. 使用 PyMuPDF 提取页级文本。
+4. 对每页计算 ESG 关键词、数值密度和表格线索。
+5. 生成 MinerU 重点页解析计划。
+6. 写出 RAG 可用的初始文本块。
 
 | 产物 | 说明 |
 | --- | --- |
@@ -125,110 +175,193 @@ JSON / CSV 导出
 | `page_scan.json` | 页级关键词、数值密度、表格线索和扫描页识别结果 |
 | `parse_plan.json` | MinerU 重点页选择计划 |
 | `table_candidates.json` | 表格候选页与样本文本行 |
-| `pymupdf_chunks.json` | RAG 可用文本块 |
+| `pymupdf_chunks.json` | RAG 初始文本块 |
 | `preprocess_manifest.csv` | 批量预处理质量概览 |
 
-### 3.3 报告有效性过滤
+### 4.3 报告有效性判断
 
-在正式解析前，系统会对报告进行适用性判断，避免无效输入进入高成本处理链路。过滤规则主要包括：
+报告过滤逻辑位于 `report_filter.py`。该模块用于在正式解析前识别无效输入，避免鉴证声明、摘要、非完整报告等文件进入高成本解析流程。
 
-- 传统社会责任报告若缺少 ESG、环境、社会和公司治理、可持续发展等披露框架信号，会被标记为 `legacy_social_responsibility_report`。
-- 鉴证声明、审验报告、摘要等非完整正文报告会被标记为 `supporting_or_summary_document`。
-- 无法打开或无法解析的 PDF 会被记录为异常输入。
+过滤规则包括：
 
-被过滤的报告不会进入 MinerU 和大模型抽取阶段，系统会输出 `skip_report.json` 和 `run_summary.json`，便于用户查看跳过原因。
+- 标题层面缺少 ESG、环境社会治理、可持续发展等披露框架信号的传统社会责任报告会被跳过。
+- 鉴证声明、审验报告、摘要等支持性文件会被跳过。
+- 无法打开或无法解析的 PDF 会记录异常原因。
 
-## 4. 选择性 MinerU 解析技术
+被跳过的报告不会进入 MinerU 和 LLM 抽取阶段，系统会写出 `skip_report.json` 和 `run_summary.json`，便于用户查看跳过原因。
 
-### 4.1 模块输入与输出
+## 5. 页级快扫与选择性 MinerU 解析技术
 
-选择性 MinerU 解析模块以 PDF 文件和页级快扫结果为输入，输出重点页面解析计划和 MinerU 任务记录。该模块不直接承担字段抽取，而是为后续 RAG 文本块构建提供更高质量的页面解析结果。
+### 5.1 页级快扫技术
 
-模块产物包括：
+页级快扫由 `page_scan.py` 完成。该模块使用 PyMuPDF 快速读取 PDF 文本层，不做复杂版式还原，主要目标是判断每一页是否值得进一步解析。
 
-| 产物 | 说明 |
+| 快扫特征 | 技术含义 | 用途 |
+| --- | --- | --- |
+| 文本长度 | 当前页可提取文本的长度 | 判断文本层是否完整 |
+| ESG 关键词 | 环境、社会、治理、碳排放、员工等关键词命中情况 | 判断页面主题相关性 |
+| 数值数量 | 数字、百分比、计量单位等出现数量 | 判断是否可能包含定量指标 |
+| 表格线索 | 表格标题、连续数值、指标项等线索 | 判断是否可能包含绩效表 |
+| 低文本页 | 文本层很少但页面可能有图片或扫描内容 | 标记视觉解析候选页 |
+| MinerU 分数 | 多种特征加权后的页面解析价值 | 决定是否进入重点解析 |
+
+【图 5-1 页级快扫特征示意图，建议放一页 ESG 表格页并标注关键词、数值和表格线索】
+
+### 5.2 解析计划生成
+
+解析计划由 `parse_plan.py` 生成。该模块读取 `page_scan.json`，根据页面得分、最大页面数和阈值配置，筛选出需要进入 MinerU 的重点页面。
+
+解析计划主要包括：
+
+- `page_count`：报告总页数。
+- `mineru_pages`：需要调用 MinerU 的重点页。
+- `visual_fallback_pages`：需要视觉兜底的候选页。
+- `pages`：每页的解析策略和评分信息。
+
+系统通过 `SELECTIVE_MINERU_MAX_PAGES` 控制每份报告最多进入 MinerU 的页面数，默认值为 12。这样可以让复杂解析资源集中在高价值页面上。
+
+### 5.3 MinerU 调用与缓存
+
+MinerU 调用逻辑位于 `mineru_runner.py`。当解析计划中存在重点页，且配置允许自动运行 MinerU 时，系统会调用外部 MinerU 命令完成解析，并将任务结果写入 `mineru_jobs.json`。
+
+MinerU 的作用是补充 PyMuPDF 在复杂版式上的不足，尤其是：
+
+- 表格结构复杂的页面。
+- 图文混排页面。
+- 文本层质量较差的页面。
+- 普通 PDF 文本提取无法稳定还原的页面。
+
+【图 5-2 选择性 MinerU 解析流程图，建议展示 page_scan 到 parse_plan 再到 mineru_jobs 的关系】
+
+### 5.4 灰区页面 LLM 复判
+
+灰区页复判由 `mineru_page_judge.py` 实现。当页面得分处于低阈值和高阈值之间时，系统可以把这些页面交给 LLM 判断是否值得进入 MinerU。
+
+该机制默认可通过配置关闭或开启。开启后，系统会限制最大复判页面数，避免额外模型调用过多。灰区复判适合处理规则判断不确定的页面，例如关键词数量不高但可能包含重要图表的页面。
+
+## 6. ESG 指标体系与 Schema 管理
+
+### 6.1 60 字段指标体系
+
+系统使用 A 股 ESG 60 字段指标体系，字段定义位于 `configs/schema/a_share_v5.py`，字段加载逻辑位于 `schema_loader.py`。每个字段不仅包含字段名，还包含召回和抽取所需的辅助信息。
+
+字段定义通常包含：
+
+| 字段属性 | 说明 |
 | --- | --- |
-| `parse_plan.json` | 每页解析策略、MinerU 重点页和视觉兜底页 |
-| `mineru_jobs.json` | MinerU 调用状态、重点页列表和任务结果 |
-| `visual_fallback_queue.json` | 需要后续视觉模型兜底的候选页面 |
+| `field_key` | 字段唯一编码 |
+| `name_cn` | 字段中文名称 |
+| `category` | ESG 维度，通常为 E、S、G |
+| `indicator_type` | 指标类型，如定量、定性、摘要等 |
+| `aliases` | 字段别名 |
+| `search_terms` | 召回搜索词 |
+| `expected_units` | 期望单位 |
+| `domain_knowledge` | 字段相关背景知识或判定说明 |
 
-### 4.2 页级快扫特征
+### 6.2 Schema 在系统中的作用
 
-`page_scan.py` 负责对 PDF 页面进行快速扫描，主要提取以下特征：
+Schema 不是单纯的字段清单，而是贯穿召回、抽取、校验和展示的核心配置。
 
-| 特征 | 作用 |
+| 使用位置 | 作用 |
 | --- | --- |
-| ESG 关键词 | 判断页面是否涉及环境、社会、治理等主题 |
-| 数值密度 | 判断页面是否可能包含定量指标 |
-| 表格线索 | 判断页面是否可能包含指标表或绩效表 |
-| 文本层长度 | 判断是否为扫描页或低文本页 |
-| 页面编号 | 为后续证据追溯提供定位信息 |
+| 证据召回 | 根据字段名、别名、搜索词和单位生成查询 |
+| 大模型抽取 | 约束模型必须返回哪些字段 |
+| 质量校验 | 判断单位、年份和字段类型是否合理 |
+| 前端展示 | 按 E/S/G 维度和指标类型组织字段 |
+| 指标分析 | 选择定量指标进行横向对比和趋势分析 |
 
-这些特征共同形成页面解析价值评分，用于后续生成 `parse_plan.json`。
+【表 6-1 可补充 60 字段指标样例表，建议展示 8 到 10 个代表字段】
 
-### 4.3 重点页面选择
+### 6.3 指标说明文档
 
-`parse_plan.py` 根据页级扫描结果选择重点页面。页面若包含较多 ESG 关键词、较高数值密度、明显表格线索或低文本扫描特征，则会获得较高 MinerU 解析分数。系统会根据配置中的页面上限选择得分靠前的页面，默认最多选择 12 页进入 MinerU。
+项目新增 `docs/schema_60_explainer.md`，用于解释 60 字段体系的字段含义和使用方式。技术文档中可以把该文件作为指标体系说明的补充材料。
 
-解析计划会把深度解析资源集中在更可能包含关键指标的页面上，避免对封面、目录、普通叙述页等页面进行重复解析。
+## 7. RAG 文本块构建与证据召回技术
 
-### 4.4 灰区页面 LLM 复判
+### 7.1 RAG 文本块构建
 
-对于得分处于低阈值和高阈值之间的灰区页面，系统支持启用 LLM 复判机制。LLM 会根据页面文本和特征判断该页是否值得进入 MinerU 解析。该功能默认关闭，用户可通过环境变量控制是否启用、阈值范围和最大复判页面数。
+文本块构建逻辑位于 `chunks.py`。系统会整合 PyMuPDF 提取文本和 MinerU 解析结果，生成统一的 `rag_chunks.json`。后续召回模块不直接处理 PDF，而是面向这些文本块进行字段级检索。
 
-灰区复判用于处理规则判断不够确定的页面，例如关键词不多但可能包含重要图表的页面。
+每个 chunk 通常包含：
 
-## 5. ESG 指标体系与证据召回
+- `chunk_id`：文本块编号。
+- `page`：来源页码。
+- `source`：来源类型，如 PyMuPDF 或 MinerU。
+- `text`：文本内容。
 
-### 5.1 指标体系
+【图 7-1 RAG 文本块构建示意图，建议展示 PyMuPDF 文本和 MinerU 文本如何合并为 chunks】
 
-系统复用 A 股 ESG 60 字段指标体系，字段定义包括字段编码、中文名称、所属维度、指标类型、别名、搜索词、期望单位等信息。指标覆盖环境、社会和治理三个维度，既包括温室气体排放、能源消耗、用水量等定量指标，也包括治理结构、员工发展、社会责任等定性信息。
+### 7.2 BM25 关键词召回
 
-字段体系在抽取流程中具有两类作用：
+BM25 召回由 `SimpleRetriever` 实现。系统会从字段定义中提取字段名、字段编码、主题词、别名、搜索词和期望单位，将其组合为查询文本，再计算每个 chunk 与查询文本的相关性。
 
-- 作为大模型结构化输出的字段约束。
-- 作为证据召回的查询来源。
+BM25 适合处理字段名称明确、单位明显、关键词直接出现的情况。例如“温室气体排放量”“员工总数”“研发投入”等字段，通常可以通过关键词和单位快速定位候选证据。
 
-### 5.2 RAG 文本块构建
+### 7.3 Embedding 向量召回
 
-`chunks.py` 负责构建 RAG 文本块。系统会优先整合 PyMuPDF 提取文本和 MinerU 解析文本，使普通文本页和复杂表格页都能进入统一检索流程。
+Embedding 向量召回由 `EmbeddingVectorRetriever` 实现。系统在 hybrid 模式下可以调用 OpenAI-compatible Embedding API，将文本块和字段查询转换为向量，再通过 cosine similarity 计算语义相似度。
 
-每个文本块通常包含：
+Embedding 召回适合处理表达方式不完全一致的情况。例如报告中不直接写字段标准名称，而是使用同义表达、近义表达或较长的描述性句子时，向量召回比单纯关键词匹配更容易找到相关证据。
 
-- chunk_id
-- 来源页面
-- 文本内容
-- 来源类型
+启用 embedding 召回的关键配置如下：
 
-这些信息会写入 `rag_chunks.json`，供后续召回和证据追溯使用。
+```text
+RETRIEVER_MODE=hybrid
+RETRIEVER_VECTOR_BACKEND=embedding
+EMBEDDING_MODEL=text-embedding-v4
+```
 
-### 5.3 BM25 召回
+如果 embedding API key 缺失或调用失败，系统会自动回退到本地字符 n-gram TF-IDF 向量，并在结果中标记 `vector_backend: local_fallback`。本地向量主要作为离线测试和异常兜底，不作为正式技术路线的主要能力。
 
-`SimpleRetriever` 使用 BM25 思路对文本块进行关键词召回。系统会从字段定义中提取字段名、字段编码、主题词、别名、搜索词、期望单位等内容作为查询词，并计算文本块与字段查询之间的相关性。
+### 7.4 RRF 融合排序
 
-BM25 召回对明确关键词和单位匹配较敏感，适合查找字段名称、指标表标题和单位标注较清晰的内容。
+Hybrid 召回由 `HybridRetriever` 实现。该模块同时执行 BM25 和 embedding 向量召回，再使用 RRF 方法融合两个结果列表。
 
-### 5.4 向量召回
+RRF 的作用是避免单一召回方式带来的偏差：
 
-系统提供两种向量召回方式：
+- BM25 对关键词精确命中敏感。
+- Embedding 对语义相关内容更敏感。
+- RRF 将两个排序结果合并，优先保留同时被多种方法召回的证据。
 
-1. 本地向量召回  
-   使用字符 n-gram TF-IDF 和 cosine similarity 构建轻量向量检索，不依赖外部模型，适合低成本验证混合召回策略。
+融合后的结果会保留：
 
-2. Embedding 向量召回  
-   调用 OpenAI-compatible Embedding API 生成文本向量，适合处理表达方式差异较大的字段证据召回场景。如果缺少 API Key 或调用失败，系统会自动回退到本地向量召回。
+| 字段 | 说明 |
+| --- | --- |
+| `retrieval_source` | 证据来源于 BM25、vector 或两者 |
+| `bm25_rank` | BM25 排名 |
+| `vector_rank` | 向量召回排名 |
+| `bm25_score` | BM25 分数 |
+| `vector_score` | 向量相似度分数 |
+| `hybrid_rank` | 融合后排名 |
+| `vector_backend` | 向量后端类型 |
 
-### 5.5 RRF 融合排序
+### 7.5 字段级证据文件
 
-`HybridRetriever` 会同时运行 BM25 和向量召回，再使用 RRF 方法融合两个召回结果。融合后的文本块会保留 BM25 排名、向量排名、融合排名和召回来源，便于后续分析不同召回方式的效果。
+每个字段的候选证据会写入 `field_contexts.json`。该文件是大模型抽取的重要输入，也用于后续人工追溯。
 
-融合结果写入 `field_contexts.json`，每个字段对应若干候选证据块。
+字段级证据结构大致如下：
 
-## 6. 大模型结构化抽取
+```json
+{
+  "field_key": [
+    {
+      "chunk_id": "page_10_chunk_1",
+      "page": 10,
+      "text": "候选证据文本",
+      "score": 0.123,
+      "retrieval_source": "bm25+vector"
+    }
+  ]
+}
+```
 
-### 6.1 抽取流程
+## 8. 大模型结构化抽取技术
 
-`extractor.py` 是结构化抽取的核心模块。其处理流程如下：
+### 8.1 抽取流程
+
+结构化抽取逻辑位于 `extractor.py`。该模块先加载 60 字段 schema，再构建 RAG chunks 和字段级证据，最后按字段批次调用大模型。
+
+【图 8-1 大模型结构化抽取流程图，建议展示 schema、field_contexts、LLM 和 extraction_results 的关系】
 
 ```text
 加载 60 字段 schema
@@ -237,238 +370,333 @@ BM25 召回对明确关键词和单位匹配较敏感，适合查找字段名称
         ↓
 按字段召回候选证据
         ↓
-按批次调用大模型
+按批次调用 LLM
         ↓
-解析模型返回结果
+解析 JSON 返回结果
         ↓
 补齐缺失字段
         ↓
 质量校验
         ↓
-输出 JSON 和 CSV
+写出 JSON / CSV
 ```
 
-### 6.2 调用预算控制
+### 8.2 Prompt 构造
 
-为避免单份报告触发过多模型调用，系统提供调用预算控制参数：
+Prompt 构造逻辑位于 `llm_client.py`。系统将字段定义和候选证据一并传给模型，并明确要求模型只输出 JSON。
+
+Prompt 中的主要约束包括：
+
+- 每个字段必须返回一条结果。
+- `matched=false` 表示未披露或证据不足。
+- 定量字段优先抽取 `value`、`unit`、`year`。
+- 定性字段给出 `summary`。
+- `evidence` 必须是证据中的短句。
+- `confidence` 取值为 0 到 1。
+- 优先抽取目标年份对应的数据。
+
+### 8.3 目标年份控制
+
+系统新增了目标年份传递机制，用于减少跨年份数据误抽。
+
+涉及的函数包括：
+
+- `extract_report(..., target_year=...)`
+- `run_pipeline(..., target_year=...)`
+- `LLMClient.extract_fields(..., target_year=...)`
+
+目标年份会同时进入 Prompt 和质量校验流程。这样模型抽取时会优先选择目标报告年份的数据，质量校验时也会对年份不一致的结果进行标记。
+
+### 8.4 调用预算控制
+
+为了控制模型调用成本，系统设置了每份报告的调用预算和字段批大小。
 
 | 配置项 | 说明 |
 | --- | --- |
 | `LLM_MAX_CALLS_PER_REPORT` | 每份报告最大模型调用次数 |
-| `LLM_FIELD_BATCH_SIZE` | 每次模型调用处理的字段数量 |
+| `LLM_FIELD_BATCH_SIZE` | 每次模型调用处理字段数 |
 | `RAG_TOP_K` | 每个字段召回的证据块数量 |
 
-当模型调用达到预算上限后，系统会为剩余字段生成空结果，并记录 `llm_call_budget_exhausted` 原因。
+当调用次数达到上限后，系统会为剩余字段生成空结果，并记录 `llm_call_budget_exhausted`，保证流程不中断。
 
-### 6.3 输出结果
-
-抽取结果同时输出 JSON 和 CSV：
+### 8.5 抽取输出
 
 | 文件 | 说明 |
 | --- | --- |
-| `extraction_results.json` | 完整字段抽取结果 |
-| `extraction_results.csv` | 可供人工查看和编辑的表格结果 |
-| `extraction_summary.json` | 抽取摘要，包括字段数、命中数、召回模式、模型调用次数等 |
+| `extraction_results.json` | 字段抽取完整结果 |
+| `extraction_results.csv` | 字段抽取表格结果 |
+| `extraction_summary.json` | 抽取摘要 |
+| `field_contexts.json` | 字段级候选证据 |
 
-单个字段结果主要包含：
+字段结果包含：
 
-- field_key
-- name_cn
-- category
-- indicator_type
-- matched
-- value
-- unit
-- year
-- summary
-- evidence
-- source_chunk_id
-- source_page
-- confidence
-- reason
+- 字段编码和字段名称。
+- ESG 维度和指标类型。
+- 是否命中。
+- 抽取值、单位和年份。
+- 定性摘要。
+- 证据短句。
+- 来源 chunk 和页码。
+- 置信度。
+- 异常原因或质量警告。
 
-### 6.4 异常处理
+## 9. 质量校验与人工复核技术
 
-系统对模型调用和结果解析设置了降级处理：
+### 9.1 质量校验
 
-- 未配置模型 Key 时，系统不会中断流程，而是生成空字段结果。
-- 模型调用异常时，系统记录错误原因，并为当前批次字段生成失败原因。
-- Embedding 召回失败时，系统自动回退到本地向量召回。
-- 报告被过滤时，系统输出跳过报告说明，不进入抽取流程。
-
-## 7. 质量校验与人工复核
-
-### 7.1 质量校验机制
-
-抽取完成后，`quality.py` 会对结果进行质量增强和异常标记。主要校验内容包括：
+质量校验逻辑位于 `quality.py`。该模块对模型返回结果进行二次处理，补充标准化值、单位警告、年份警告、证据评分和质量提示。
 
 | 校验项 | 说明 |
 | --- | --- |
-| 年份校验 | 判断抽取年份是否符合目标报告年度 |
-| 单位校验 | 判断单位是否缺失或异常 |
-| 证据评分 | 判断证据文本是否足以支撑抽取结果 |
-| 置信度校验 | 根据模型置信度判断复核优先级 |
+| 年份校验 | 判断字段年份是否与目标报告年份一致 |
+| 单位校验 | 判断单位是否缺失或是否与字段期望单位不符 |
+| 证据评分 | 判断证据文本是否足以支撑字段结果 |
+| 置信度校验 | 根据模型置信度辅助人工复核 |
+| 质量警告 | 汇总年份、单位、证据等异常信息 |
 
-当前配置中，目标报告年度默认为 2024。若结果中出现 2025 或历史年份，系统会标记年份异常并提高复核优先级。
+### 9.2 复核优先级
 
-### 7.2 复核优先级
+复核优先级计算逻辑位于 `api.py` 的 `_review_priority()`。系统会根据字段风险自动计算 0 到 100 的复核优先级，优先级越高，越需要人工检查。
 
-API 服务会根据字段抽取情况计算 `review_priority`。优先级主要受以下因素影响：
+影响优先级的因素包括：
 
-- 置信度较低。
 - 字段未命中。
-- 缺少证据或缺少页码。
+- 置信度较低。
+- 缺少证据。
+- 缺少来源页码。
 - 证据质量评分较低。
 - 年份异常。
 - 单位异常。
-- 人工状态为已编辑但未最终确认。
+- 人工已编辑但仍需确认。
 
-复核优先级用于帮助用户优先处理风险较高的字段，减少人工复核工作量。
+### 9.3 人工复核状态
 
-### 7.3 人工复核闭环
-
-前端复核页面支持以下操作：
-
-- 查看字段抽取值。
-- 查看来源页码、证据文本和模型证据。
-- 确认结果。
-- 驳回结果。
-- 编辑 value、unit、year 和 evidence。
-- 保存复核备注。
-- 导出复核后的 CSV。
-
-复核记录会通过 API 写入任务目录和 SQLite 任务库，后续导出 CSV 时会合并原始抽取结果和人工修正结果。
-
-## 8. 后端 API 设计
-
-### 8.1 服务概述
-
-系统后端使用 FastAPI 封装核心处理流水线。API 服务负责接收 PDF 上传、创建异步任务、执行扫描或抽取、保存任务状态、提供结果查询和导出接口。
-
-### 8.2 核心接口
-
-| 方法 | 路径 | 功能 |
-| --- | --- | --- |
-| GET | `/health` | 健康检查 |
-| POST | `/reports` | 上传单份 PDF 并创建任务 |
-| POST | `/reports/batch` | 批量上传 PDF 并创建任务 |
-| GET | `/jobs` | 查询历史任务列表 |
-| GET | `/jobs/{job_id}` | 查询任务详情 |
-| POST | `/jobs/{job_id}/retry` | 重跑任务 |
-| DELETE | `/jobs/{job_id}` | 删除任务 |
-| GET | `/jobs/{job_id}/summary` | 查询抽取摘要 |
-| GET | `/jobs/{job_id}/results` | 查询字段抽取结果 |
-| GET | `/jobs/{job_id}/quality` | 查询质量摘要 |
-| GET | `/jobs/{job_id}/reviews` | 查询复核记录 |
-| PUT | `/jobs/{job_id}/reviews/{field_key}` | 保存字段复核记录 |
-| GET | `/jobs/{job_id}/export.csv` | 导出复核后的 CSV |
-| GET | `/jobs/{job_id}/artifacts` | 查询任务产物列表 |
-
-### 8.3 上传与任务管理
-
-上传接口只接受 PDF 文件，单文件大小上限为 80 MB。系统会计算文件 SHA256，避免重复上传同一份报告。每个上传文件会生成独立 job_id，任务状态包括：
+人工复核状态存储在 `reviews` 表和任务目录中的复核文件里。系统支持四种状态：
 
 | 状态 | 含义 |
 | --- | --- |
-| queued | 已创建，等待运行 |
-| running | 正在处理 |
-| succeeded | 处理成功 |
-| failed | 处理失败 |
-| skipped | 已跳过 |
+| `pending` | 待复核 |
+| `approved` | 已确认 |
+| `rejected` | 已驳回 |
+| `edited` | 已编辑 |
 
-### 8.4 数据存储
+用户可以在前端查看字段值、证据和置信度，并对 value、unit、year、evidence 和备注进行修正。
 
-当前系统采用本地文件和 SQLite 结合的方式存储任务信息。PDF 文件存放在 `data/uploads/`，任务产物存放在 `output/api_jobs/{job_id}/`。SQLite 记录任务、报告、结果、复核状态和产物索引，便于前端快速查询历史任务。
+### 9.4 复核结果导出
 
-## 9. 前端可视化设计
+复核后的结果通过 `/jobs/{job_id}/export.csv` 导出。导出的 CSV 会同时保留原始抽取结果和人工修正结果。
 
-### 9.1 前端功能
+导出字段包括：
 
-前端使用 React 和 Vite 实现，主要提供五个视图：
+- 原始值、原始单位、原始年份。
+- 复核状态。
+- 修正值、修正单位、修正年份。
+- 修正证据。
+- 复核备注。
+- 质量警告和复核优先级。
+
+## 10. 数据存储与任务管理技术
+
+### 10.1 SQLite / PostgreSQL 双后端
+
+数据存储逻辑位于 `job_store.py`。系统默认可以使用 SQLite 本地数据库，也可以通过配置 `DATABASE_URL` 切换到 PostgreSQL。
+
+SQLite 适合本地开发和轻量测试，PostgreSQL 适合多报告、多任务和指标分析场景。系统通过 `psycopg[binary]` 连接 PostgreSQL，并在 `JobStore` 中统一封装 SQL 差异。
+
+【图 10-1 数据存储结构图，建议展示 reports、jobs、extraction_results、reviews、artifacts 五张表关系】
+
+### 10.2 数据表设计
+
+| 表 | 说明 |
+| --- | --- |
+| `reports` | 报告元数据，包括文件名、公司名、证券代码、报告年份 |
+| `jobs` | 任务信息，包括状态、模式、耗时、输出目录 |
+| `reviews` | 人工复核记录 |
+| `extraction_results` | 字段抽取结果 |
+| `artifacts` | 任务产物索引 |
+
+### 10.3 新增存储字段
+
+当前版本增加了更多面向分析和统计的字段：
+
+| 字段 | 所属表 | 作用 |
+| --- | --- | --- |
+| `company_name` | `reports` | 公司名称 |
+| `stock_code` | `reports` | 证券代码 |
+| `report_year` | `reports` | 报告年份 |
+| `started_at` | `jobs` | 任务开始时间 |
+| `finished_at` | `jobs` | 任务结束时间 |
+| `duration_seconds` | `jobs` | 任务耗时 |
+| `timing_json` | `jobs` | 分阶段耗时详情 |
+| `report_id` | `extraction_results` | 结果关联报告 |
+| `numeric_value` | `extraction_results` | 用于图表分析的数值字段 |
+
+### 10.4 报告元数据推断与修正
+
+系统会从文件名中尝试推断证券代码、公司名称和报告年份。如果自动推断不准确，用户可以通过接口修正：
+
+```text
+PUT /reports/{report_id}/metadata
+```
+
+该接口用于保证后续指标横向对比和趋势分析时，公司和年份信息准确。
+
+## 11. 后端 API 技术设计
+
+### 11.1 任务接口
+
+| 方法 | 路径 | 功能 |
+| --- | --- | --- |
+| `POST` | `/reports` | 上传单份报告并创建任务 |
+| `POST` | `/reports/batch` | 批量上传报告并创建任务 |
+| `GET` | `/jobs` | 查询任务列表 |
+| `GET` | `/jobs/{job_id}` | 查询任务详情 |
+| `POST` | `/jobs/{job_id}/retry` | 重跑任务 |
+| `DELETE` | `/jobs/{job_id}` | 删除任务 |
+
+### 11.2 结果接口
+
+| 方法 | 路径 | 功能 |
+| --- | --- | --- |
+| `GET` | `/jobs/{job_id}/summary` | 查询任务摘要 |
+| `GET` | `/jobs/{job_id}/results` | 查询字段抽取结果 |
+| `GET` | `/jobs/{job_id}/quality` | 查询质量统计 |
+| `GET` | `/jobs/{job_id}/export.csv` | 导出复核后 CSV |
+| `GET` | `/jobs/{job_id}/artifacts` | 查询任务产物 |
+
+### 11.3 复核接口
+
+| 方法 | 路径 | 功能 |
+| --- | --- | --- |
+| `GET` | `/jobs/{job_id}/reviews` | 查询复核记录 |
+| `PUT` | `/jobs/{job_id}/reviews/{field_key}` | 保存字段复核 |
+
+### 11.4 指标分析接口
+
+指标分析接口用于支持前端 ECharts 可视化。
+
+| 方法 | 路径 | 功能 |
+| --- | --- | --- |
+| `GET` | `/metrics/options` | 获取年份、企业、指标选项 |
+| `GET` | `/metrics/compare` | 企业横向指标对比 |
+| `GET` | `/metrics/trend` | 单企业指标趋势分析 |
+
+`/metrics/compare` 适合对同一年份、同一字段下不同企业的指标值进行比较。`/metrics/trend` 适合查看同一企业在不同年份下某个指标的变化趋势。
+
+## 12. React 前端与 ECharts 可视化技术
+
+### 12.1 前端技术结构
+
+前端位于 `frontend-react/`，采用 React + TypeScript + Vite 开发。前端通过 FastAPI 接口读取任务、结果、复核和指标分析数据。
+
+【图 12-1 前端页面结构图，建议展示总览、报告管理、结果复核、指标分析、导出中心之间的关系】
+
+### 12.2 页面功能
 
 | 页面 | 功能 |
 | --- | --- |
-| 项目总览 | 展示报告任务数量、完成情况、失败/跳过数量和待复核数量 |
-| 报告管理 | 上传报告、查看历史任务、重跑任务、删除任务 |
-| 结果复核 | 查看字段抽取结果、证据文本、置信度和复核状态 |
-| 指标对比 | 对多份报告的同一 ESG 指标进行横向比较 |
-| 导出中心 | 下载复核后的 CSV 文件 |
+| 项目总览 | 展示任务数量、完成数、失败数、待复核数量 |
+| 报告管理 | 上传、查看、重跑、删除报告 |
+| 结果复核 | 查看字段结果、证据、置信度并进行人工修正 |
+| 指标对比 | 对多份报告的同一字段进行横向比较 |
+| 指标分析 | 使用 ECharts 展示定量指标图表 |
+| 导出中心 | 下载复核后的 CSV |
 
-### 9.2 结果复核页面
+### 12.3 ECharts 可视化
 
-结果复核页面是系统的人机协同核心。用户可以在左侧查看字段列表，在右侧查看字段详情、来源证据、抽取值和置信度。对于低置信度、缺失证据或年份异常的字段，用户可以优先处理。
+系统使用 ECharts 展示定量 ESG 指标。
 
-复核操作包括确认、编辑和驳回。保存后，系统会自动更新字段状态，并在导出时使用人工修正后的结果。
+当前可视化方式包括：
 
-### 9.3 指标对比页面
+- 企业横向对比柱状图：展示同一年份、同一指标下不同企业的指标值。
+- 企业趋势折线图：展示同一企业、同一指标在不同年份的变化趋势。
+- 非定量指标证据卡片：对无法数值化的定性指标，以证据和摘要方式展示。
 
-指标对比页面支持用户选择多份已完成报告，再按 E、S、G 维度选择具体指标，查看不同报告在同一指标下的抽取结果。该功能适合横向比较上市公司的 ESG 表现，也便于发现字段抽取异常。
+【图 12-2 企业横向对比柱状图占位，建议放 ECharts 图表截图】
 
-## 10. 系统运行与部署
+【图 12-3 单企业趋势折线图占位，建议放 ECharts 图表截图】
 
-### 10.1 环境配置
+### 12.4 前后端交互
 
-系统通过 `.env` 文件配置运行参数。主要配置项包括：
+前端主要通过 `fetch` 调用后端接口：
 
-| 配置项 | 说明 |
-| --- | --- |
-| `MINERU_COMMAND` | MinerU 命令 |
-| `DASHSCOPE_API_KEY` | 大模型调用 Key |
-| `TEXT_MODEL` | 字段抽取模型 |
-| `RETRIEVER_MODE` | 召回模式，支持 simple 和 hybrid |
-| `RETRIEVER_VECTOR_BACKEND` | 向量后端，支持 local 和 embedding |
-| `SELECTIVE_MINERU_MAX_PAGES` | 每份报告 MinerU 重点页上限 |
-| `TARGET_REPORT_YEAR` | 目标报告年度 |
-| `MINERU_LLM_REVIEW_ENABLED` | 是否启用灰区页面 LLM 复判 |
+- 上传 PDF 时使用 `FormData`。
+- 任务列表通过 `/jobs` 轮询刷新。
+- 抽取结果通过 `/jobs/{job_id}/results` 获取。
+- 复核结果通过 `PUT /jobs/{job_id}/reviews/{field_key}` 保存。
+- 指标分析通过 `/metrics/compare` 和 `/metrics/trend` 获取。
+- CSV 通过 `/jobs/{job_id}/export.csv` 下载。
 
-### 10.2 本地运行
+## 13. 系统部署与运行配置
 
-后端服务可通过 Uvicorn 启动：
+### 13.1 本地运行
+
+后端可使用 Uvicorn 启动：
 
 ```powershell
 $env:PYTHONPATH='C:\Users\18130\PycharmProjects\爬虫\esg-selective-mineru-agent\src'
 & 'C:\Users\18130\.conda\envs\pachong\python.exe' -m uvicorn esg_selective_mineru.api:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-前端工程可在 `frontend-react/` 目录下构建：
+前端可在 `frontend-react/` 目录中运行：
 
 ```powershell
-npm run build
+npm run dev
 ```
 
-### 10.3 Docker 部署
+### 13.2 Docker 部署
 
-项目提供 Dockerfile 和 Docker Compose 配置，可通过以下命令启动：
+Dockerfile 采用多阶段构建。第一阶段使用 Node.js 构建 React 前端，第二阶段使用 Python 3.11 镜像运行 FastAPI 服务。
 
-```powershell
-docker compose up --build
-```
+Docker Compose 同时启动 API 和 PostgreSQL：
 
-Docker 环境默认关闭 MinerU 自动运行，避免容器内缺少本机 MinerU 可执行文件。如果需要在容器内运行 MinerU，需要在镜像中安装 MinerU，并配置 `MINERU_AUTO_RUN_ENABLED=true` 和 `MINERU_COMMAND`。
+| 服务 | 镜像或构建方式 | 说明 |
+| --- | --- | --- |
+| `api` | 本项目 Dockerfile | FastAPI 后端和静态前端 |
+| `postgres` | `postgres:16-alpine` | PostgreSQL 数据库 |
 
-## 11. 测试与评估
+### 13.3 关键配置项
 
-### 11.1 单元测试
+| 配置项 | 说明 |
+| --- | --- |
+| `DATABASE_URL` | 数据库连接地址，支持 SQLite 或 PostgreSQL |
+| `MINERU_COMMAND` | MinerU 命令 |
+| `DASHSCOPE_API_KEY` | 文本模型和 embedding 模型 API Key |
+| `OPENAI_BASE_URL` | OpenAI-compatible API 地址 |
+| `TEXT_MODEL` | 字段抽取模型 |
+| `RETRIEVER_MODE` | 召回模式，支持 `simple` 和 `hybrid` |
+| `RETRIEVER_VECTOR_BACKEND` | 向量后端，正式使用 `embedding`，异常时可 fallback |
+| `EMBEDDING_MODEL` | embedding 模型名称 |
+| `TARGET_REPORT_YEAR` | 默认目标报告年度 |
+| `SELECTIVE_MINERU_MAX_PAGES` | 每份报告最多进入 MinerU 的页面数 |
 
-项目提供了针对核心模块的测试，包括：
+## 14. 测试与评估
 
-| 测试文件 | 测试内容 |
+### 14.1 单元测试
+
+| 测试文件 | 内容 |
 | --- | --- |
 | `tests/test_report_filter.py` | 报告过滤规则 |
-| `tests/test_parse_plan.py` | 重点页面选择计划 |
+| `tests/test_parse_plan.py` | 解析计划生成 |
 | `tests/test_retriever.py` | 证据召回逻辑 |
 
-这些测试覆盖了异常输入识别、解析计划生成和召回结果排序等关键逻辑。
+### 14.2 异常输入验证
 
-### 11.2 异常输入测试
+系统对以下异常输入进行处理：
 
-系统对非完整 ESG 报告、传统社会责任报告、鉴证声明和摘要类文件进行了异常输入处理。相关说明见 `docs/abnormal_input_test_report.md`。异常输入不会进入 MinerU 和 LLM 抽取链路，有助于减少资源浪费和错误结果。
+- 非完整 ESG 报告。
+- 鉴证声明或审验报告。
+- 摘要文件。
+- 无法解析的 PDF。
+- 重复上传的 PDF。
 
-### 11.3 小样本人工评估
+异常输入不会进入 MinerU 和 LLM 抽取链路，系统会记录跳过原因。
 
-系统提供 `eval` 命令，从多份完整运行结果中抽样字段，生成人工评估表。人工可标注字段命中是否正确、value 是否正确、证据是否可用。再次运行评估命令时，系统会保留人工标注并更新评估指标。
+### 14.3 抽取结果评估
 
-主要评估指标包括：
+系统提供人工评估流程，用于检查字段命中、value 准确性和 evidence 可用性。
+
+评估指标包括：
 
 - 字段命中率。
 - value 准确率。
@@ -476,29 +704,42 @@ Docker 环境默认关闭 MinerU 自动运行，避免容器内缺少本机 Mine
 - 平均处理时间。
 - MinerU 页面调用比例。
 
-### 11.4 召回模式对比
+### 14.4 召回模式对比
 
-系统支持对 simple、local hybrid 和 embedding hybrid 三种召回模式进行对比评估。评估命令会生成 `retrieval_manual_comparison.csv` 和 `retrieval_comparison_summary.json`，用户可人工判断不同召回模式在各字段上的证据命中效果。
+系统支持对不同召回模式进行对比，包括：
 
-### 11.5 成本与效率分析
+- simple：BM25 召回。
+- hybrid + embedding：BM25 与 embedding 向量召回融合。
+- local fallback：embedding 不可用时的本地向量兜底。
 
-选择性 MinerU 解析机制使系统不必对整份 PDF 进行高成本解析。通过限制重点页数量、限制每份报告的大模型调用次数、限制每批次字段数量，系统可以在比赛和本地演示环境中保持可控的处理成本。
+对比结果可以通过人工评估表记录每个字段的最佳召回模式和证据质量。
 
-## 12. 技术小结与后续优化
+## 15. 技术小结与后续优化
 
-### 12.1 技术小结
+### 15.1 当前技术实现小结
 
-系统当前实现了一条完整的 ESG PDF 处理链路：报告采集、文件预处理、重点页解析、字段证据召回、大模型结构化抽取、质量校验、人工复核和 CSV 导出。各模块之间通过 JSON、CSV 和任务记录解耦，既可以通过 CLI 单独运行，也可以通过 FastAPI 和前端页面完成任务化处理。
+当前系统已经形成从 PDF 输入到结构化指标输出的完整技术链路，包括：
 
-当前版本的技术重点包括：选择性 MinerU 解析、字段级 RAG 召回、混合召回融合、抽取质量校验和人工复核状态管理。
+- PDF 页级快扫。
+- 选择性 MinerU 解析。
+- 60 字段 ESG schema 管理。
+- BM25 + embedding 的字段级证据召回。
+- 大模型结构化抽取。
+- 目标年份控制。
+- 质量校验和复核优先级。
+- SQLite / PostgreSQL 双后端存储。
+- React 前端复核和 ECharts 指标分析。
+- JSON / CSV 产物导出。
 
-### 12.2 后续优化方向
+### 15.2 后续优化方向
 
-后续可从以下方向继续完善：
+后续可以继续优化以下技术点：
 
-- 引入更稳定的表格结构化解析，提升复杂表格字段抽取准确率。
-- 使用真实 Embedding 和向量数据库替代本地向量原型，提高大规模召回能力。
-- 将任务队列从 FastAPI BackgroundTasks 升级为 Redis + Celery 或 RQ。
-- 将结果存储从本地文件和 SQLite 升级为 PostgreSQL。
-- 增加 PDF 页面截图与证据高亮功能，使人工复核更加直观。
-- 建立更大规模的人工标注评估集，持续优化召回策略和抽取提示词。
+- 清理历史遗留前端目录和不再使用的静态挂载逻辑，保持正式技术栈统一。
+- 增强 MinerU 表格结构化结果利用，提高复杂表格字段抽取准确率。
+- 引入向量数据库，替代当前内存级 embedding 检索。
+- 增加 PDF 页面截图和证据高亮功能。
+- 将任务执行从 FastAPI BackgroundTasks 升级为 Celery 或 RQ。
+- 扩大人工标注评估集，持续优化召回策略和抽取 prompt。
+- 完善 PostgreSQL 索引，提升多报告、多指标分析查询性能。
+
