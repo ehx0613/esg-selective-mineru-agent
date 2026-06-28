@@ -33,7 +33,9 @@ Copy-Item configs\.env.example .env
 - `RAG_BM25_TOP_K`: hybrid 模式下 BM25 分支候选数量，默认 30。
 - `RAG_VECTOR_TOP_K`: hybrid 模式下本地向量分支候选数量，默认 30。
 - `RAG_RRF_K`: hybrid 模式下 RRF 融合参数，默认 60。
+- `MINERU_AUTO_RUN_ENABLED`: 是否自动运行 MinerU。低配服务器演示默认 `false`，用于先跑通上传、抽取、复核和导出流程；升级服务器后改为 `true` 即可启用 MinerU。
 - `SELECTIVE_MINERU_MAX_PAGES`: 重点页上限，默认 12。
+- `MINERU_BATCH_SIZE`: MinerU 分批页数，低配服务器建议 1；本地或高配服务器可按性能调大。
 - `TARGET_REPORT_YEAR`: 当前抽取和质量校验的目标报告年度，默认 2024。现阶段只接受 2024 年数据；报告中出现的 2025 或历史年份会被标记为年份异常并提高复核优先级。
 - `MINERU_LLM_REVIEW_ENABLED`: 是否启用 MinerU 灰区页 LLM 复判，默认 false。
 - `MINERU_LLM_REVIEW_LOW_THRESHOLD`: 低于该分数直接跳过，默认 25。
@@ -180,7 +182,7 @@ docker compose up --build
 
 上传接口目前限制 PDF 文件，单文件大小上限为 80 MB，用于避免误传大文件或非 PDF 文件拖垮本地 MVP 服务。
 
-Docker 环境默认关闭 MinerU 自动运行，避免容器内缺少本机 MinerU 可执行文件。需要容器内跑 MinerU 时，请把 MinerU 安装进镜像，并覆盖 `MINERU_AUTO_RUN_ENABLED=true` 与 `MINERU_COMMAND`。
+Docker/服务器演示环境默认关闭 MinerU 自动运行，保留最多 12 个重点页和分批参数，先验证网页平台的上传、任务处理、复核和导出闭环。需要容器内跑 MinerU 时，请确认镜像内依赖安装完整，并在 `.env` 中设置 `MINERU_AUTO_RUN_ENABLED=true`、`MINERU_COMMAND` 和合适的 `MINERU_BATCH_SIZE`。
 
 ## 产物
 
