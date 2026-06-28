@@ -25,13 +25,15 @@ RUN sed -i 's|http://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g; s
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md requirements-mineru.txt /app/
+
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch torchvision
+RUN pip install --no-cache-dir --no-deps -r requirements-mineru.txt
+
 COPY src /app/src
 COPY configs /app/configs
 COPY frontend /app/frontend
 COPY --from=frontend /frontend/dist /app/frontend-react/dist
 
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch torchvision
-RUN pip install --no-cache-dir --no-deps -r requirements-mineru.txt
 RUN pip install --no-cache-dir -e .
 
 EXPOSE 8000
