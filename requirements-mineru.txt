@@ -46,6 +46,7 @@ pypptx-with-oxml==1.0.3
 qwen-vl-utils==0.0.14
 ray==2.55.1
 regex==2026.5.9
+reportlab==4.5.1
 requests==2.34.2
 robust-downloader==0.0.2
 safetensors==0.7.0
