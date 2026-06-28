@@ -13,7 +13,7 @@ core_esg_v5_a_share_60
 当前 selective-MinerU 项目并不重新手写这 60 个指标，而是通过配置加载原项目中的 schema：
 
 ```text
-C:\Users\18130\PycharmProjects\爬虫\esg-multimodal-extraction-agent\config\schema\a_share_v5.py
+/path/to/esg-multimodal-extraction-agent/config/schema/a_share_v5.py
 ```
 
 当前项目中的加载入口为：

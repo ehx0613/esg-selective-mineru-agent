@@ -52,14 +52,13 @@ def load_settings(start: Path | None = None) -> Settings:
     root = Path(start or Path.cwd()).resolve()
     load_dotenv(root / "configs" / ".env")
     load_dotenv(root / ".env", override=True)
-    original_root = Path(os.getenv(
-        "ORIGINAL_ESG_PROJECT_ROOT",
-        r"C:\Users\18130\PycharmProjects\爬虫\esg-multimodal-extraction-agent",
-    ))
-    original_values = dotenv_values(original_root / ".env")
-    for key, value in original_values.items():
-        if value and not os.getenv(key):
-            os.environ[key] = value
+    original_root_value = os.getenv("ORIGINAL_ESG_PROJECT_ROOT", "").strip()
+    original_root = Path(original_root_value) if original_root_value else Path()
+    if original_root_value:
+        original_values = dotenv_values(original_root / ".env")
+        for key, value in original_values.items():
+            if value and not os.getenv(key):
+                os.environ[key] = value
     load_dotenv(root / ".env", override=True)
     return Settings(
         project_root=root,
