@@ -8,13 +8,26 @@ from typing import Any, Dict
 
 import fitz
 
+_DEFAULT_BATCH_SIZE = 4
+
+
+def _valid_pages(pdf_path: Path, pages: list[int]) -> list[int]:
+    with fitz.open(pdf_path) as source:
+        page_count = len(source)
+    return sorted({int(page) for page in pages if 1 <= int(page) <= page_count})
+
+
+def _page_batches(pages: list[int], batch_size: int = _DEFAULT_BATCH_SIZE) -> list[list[int]]:
+    valid_batch_size = max(1, batch_size)
+    return [pages[index:index + valid_batch_size] for index in range(0, len(pages), valid_batch_size)]
+
 
 def _create_page_subset_pdf(pdf_path: Path, pages: list[int], output_dir: Path) -> Path:
     source = fitz.open(pdf_path)
     subset = fitz.open()
     try:
         page_count = len(source)
-        valid_pages = sorted({page for page in pages if 1 <= int(page) <= page_count})
+        valid_pages = sorted({int(page) for page in pages if 1 <= int(page) <= page_count})
         if not valid_pages:
             return pdf_path
         for page_number in valid_pages:
@@ -29,6 +42,35 @@ def _create_page_subset_pdf(pdf_path: Path, pages: list[int], output_dir: Path) 
         source.close()
 
 
+def _run_mineru_command(command: str, timeout_seconds: int) -> Dict[str, Any]:
+    completed = subprocess.run(
+        shlex.split(command, posix=os.name != "nt"),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout_seconds,
+        check=False,
+    )
+    return {
+        "status": "completed" if completed.returncode == 0 else "failed",
+        "return_code": completed.returncode,
+        "stdout_tail": completed.stdout[-2000:],
+        "stderr_tail": completed.stderr[-2000:],
+    }
+
+
+def _summarize_batch_results(batch_results: list[Dict[str, Any]]) -> str:
+    if not batch_results:
+        return "skipped"
+    completed = sum(1 for item in batch_results if item.get("status") == "completed")
+    if completed == len(batch_results):
+        return "completed"
+    if completed:
+        return "partial"
+    return "failed"
+
+
 def run_mineru(
     pdf_path: Path,
     output_root: Path,
@@ -41,38 +83,43 @@ def run_mineru(
     if not command_template.strip():
         return {"attempted": False, "status": "not_configured", "error": ""}
     output_root.mkdir(parents=True, exist_ok=True)
-    mineru_pdf_path = pdf_path
-    if selected_pages:
-        mineru_pdf_path = _create_page_subset_pdf(pdf_path, selected_pages, work_dir or output_root)
-    command = command_template.format(pdf=str(mineru_pdf_path.resolve()), output=str(output_root.resolve()))
+    valid_pages = _valid_pages(pdf_path, selected_pages or []) if selected_pages else []
+    batches = _page_batches(valid_pages) if valid_pages else [[]]
+    batch_results: list[Dict[str, Any]] = []
     try:
-        completed = subprocess.run(
-            shlex.split(command, posix=os.name != "nt"),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout_seconds,
-            check=False,
-        )
+        for batch_index, batch_pages in enumerate(batches, start=1):
+            mineru_pdf_path = pdf_path
+            if batch_pages:
+                mineru_pdf_path = _create_page_subset_pdf(pdf_path, batch_pages, work_dir or output_root)
+            command = command_template.format(pdf=str(mineru_pdf_path.resolve()), output=str(output_root.resolve()))
+            result = _run_mineru_command(command, timeout_seconds)
+            batch_results.append({
+                **result,
+                "batch_index": batch_index,
+                "command": command,
+                "input_pdf": str(mineru_pdf_path),
+                "selected_pages": batch_pages,
+                "selected_page_count": len(batch_pages),
+            })
         return {
             "attempted": True,
-            "status": "completed" if completed.returncode == 0 else "failed",
-            "return_code": completed.returncode,
-            "stdout_tail": completed.stdout[-2000:],
-            "stderr_tail": completed.stderr[-2000:],
-            "command": command,
-            "input_pdf": str(mineru_pdf_path),
-            "selected_pages": selected_pages or [],
-            "selected_page_count": len(selected_pages or []),
+            "status": _summarize_batch_results(batch_results),
+            "batch_results": batch_results,
+            "batch_count": len(batch_results),
+            "stdout_tail": "\n".join(str(item.get("stdout_tail") or "") for item in batch_results)[-2000:],
+            "stderr_tail": "\n".join(str(item.get("stderr_tail") or "") for item in batch_results)[-2000:],
+            "selected_pages": valid_pages,
+            "selected_page_count": len(valid_pages),
+            "batch_size": _DEFAULT_BATCH_SIZE,
         }
     except Exception as exc:
         return {
             "attempted": True,
             "status": "exception",
             "error": str(exc),
-            "command": command,
-            "input_pdf": str(mineru_pdf_path),
-            "selected_pages": selected_pages or [],
-            "selected_page_count": len(selected_pages or []),
+            "batch_results": batch_results,
+            "batch_count": len(batch_results),
+            "selected_pages": valid_pages,
+            "selected_page_count": len(valid_pages),
+            "batch_size": _DEFAULT_BATCH_SIZE,
         }

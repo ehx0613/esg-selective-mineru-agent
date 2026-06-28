@@ -1,6 +1,6 @@
 import fitz
 
-from esg_selective_mineru.mineru_runner import _create_page_subset_pdf
+from esg_selective_mineru.mineru_runner import _create_page_subset_pdf, _page_batches
 
 
 def test_create_page_subset_pdf_keeps_only_selected_pages(tmp_path):
@@ -23,3 +23,11 @@ def test_create_page_subset_pdf_keeps_only_selected_pages(tmp_path):
         assert "page 4" in subset[1].get_text()
     finally:
         subset.close()
+
+
+def test_page_batches_keeps_selected_pages_in_small_groups():
+    assert _page_batches([2, 9, 12, 16, 17, 19, 25, 27, 29, 33, 34, 35]) == [
+        [2, 9, 12, 16],
+        [17, 19, 25, 27],
+        [29, 33, 34, 35],
+    ]
