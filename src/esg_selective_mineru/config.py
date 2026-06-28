@@ -15,6 +15,7 @@ class Settings:
     mineru_command: str
     mineru_output_root: Path
     mineru_timeout_seconds: int
+    mineru_batch_size: int
     selective_mineru_max_pages: int
     selective_mineru_score_threshold: int
     mineru_llm_review_enabled: bool
@@ -67,6 +68,7 @@ def load_settings(start: Path | None = None) -> Settings:
         mineru_command=os.getenv("MINERU_COMMAND", ""),
         mineru_output_root=Path(os.getenv("MINERU_OUTPUT_ROOT", "output/mineru_cache")),
         mineru_timeout_seconds=int(os.getenv("MINERU_TIMEOUT_SECONDS", "1800")),
+        mineru_batch_size=int(os.getenv("MINERU_BATCH_SIZE", "1")),
         selective_mineru_max_pages=int(os.getenv("SELECTIVE_MINERU_MAX_PAGES", "12")),
         selective_mineru_score_threshold=int(os.getenv("SELECTIVE_MINERU_SCORE_THRESHOLD", "35")),
         mineru_llm_review_enabled=_bool_env("MINERU_LLM_REVIEW_ENABLED"),

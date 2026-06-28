@@ -26,8 +26,11 @@ def test_create_page_subset_pdf_keeps_only_selected_pages(tmp_path):
 
 
 def test_page_batches_keeps_selected_pages_in_small_groups():
-    assert _page_batches([2, 9, 12, 16, 17, 19, 25, 27, 29, 33, 34, 35]) == [
+    pages = [2, 9, 12, 16, 17, 19, 25, 27, 29, 33, 34, 35]
+
+    assert _page_batches(pages, batch_size=4) == [
         [2, 9, 12, 16],
         [17, 19, 25, 27],
         [29, 33, 34, 35],
     ]
+    assert _page_batches(pages) == [[page] for page in pages]

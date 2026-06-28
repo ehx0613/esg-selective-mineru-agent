@@ -8,8 +8,6 @@ from typing import Any, Dict
 
 import fitz
 
-_DEFAULT_BATCH_SIZE = 4
-
 
 def _valid_pages(pdf_path: Path, pages: list[int]) -> list[int]:
     with fitz.open(pdf_path) as source:
@@ -17,7 +15,7 @@ def _valid_pages(pdf_path: Path, pages: list[int]) -> list[int]:
     return sorted({int(page) for page in pages if 1 <= int(page) <= page_count})
 
 
-def _page_batches(pages: list[int], batch_size: int = _DEFAULT_BATCH_SIZE) -> list[list[int]]:
+def _page_batches(pages: list[int], batch_size: int = 1) -> list[list[int]]:
     valid_batch_size = max(1, batch_size)
     return [pages[index:index + valid_batch_size] for index in range(0, len(pages), valid_batch_size)]
 
@@ -79,12 +77,14 @@ def run_mineru(
     *,
     selected_pages: list[int] | None = None,
     work_dir: Path | None = None,
+    batch_size: int = 1,
 ) -> Dict[str, Any]:
     if not command_template.strip():
         return {"attempted": False, "status": "not_configured", "error": ""}
     output_root.mkdir(parents=True, exist_ok=True)
     valid_pages = _valid_pages(pdf_path, selected_pages or []) if selected_pages else []
-    batches = _page_batches(valid_pages) if valid_pages else [[]]
+    effective_batch_size = max(1, batch_size)
+    batches = _page_batches(valid_pages, effective_batch_size) if valid_pages else [[]]
     batch_results: list[Dict[str, Any]] = []
     try:
         for batch_index, batch_pages in enumerate(batches, start=1):
@@ -110,7 +110,7 @@ def run_mineru(
             "stderr_tail": "\n".join(str(item.get("stderr_tail") or "") for item in batch_results)[-2000:],
             "selected_pages": valid_pages,
             "selected_page_count": len(valid_pages),
-            "batch_size": _DEFAULT_BATCH_SIZE,
+            "batch_size": effective_batch_size,
         }
     except Exception as exc:
         return {
@@ -121,5 +121,5 @@ def run_mineru(
             "batch_count": len(batch_results),
             "selected_pages": valid_pages,
             "selected_page_count": len(valid_pages),
-            "batch_size": _DEFAULT_BATCH_SIZE,
+            "batch_size": effective_batch_size,
         }

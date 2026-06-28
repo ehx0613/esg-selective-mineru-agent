@@ -102,6 +102,7 @@ def run_pipeline(pdf_path: Path, output_dir: Path, settings: Settings, *, extrac
                 settings.mineru_timeout_seconds,
                 selected_pages=plan["mineru_pages"],
                 work_dir=output_dir,
+                batch_size=settings.mineru_batch_size,
             )
     with timer.stage("write_mineru_artifacts"):
         write_json(output_dir / "mineru_jobs.json", {"mineru_pages": plan["mineru_pages"], "mineru_result": mineru_result})
